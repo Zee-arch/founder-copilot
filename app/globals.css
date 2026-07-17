@@ -1,0 +1,55 @@
+@import "tailwindcss";
+
+@theme {
+  /* Report "instrument panel" surfaces */
+  --color-ink: #0e1424;
+  --color-ink-surface: #171f33;
+  --color-ink-border: #2a3652;
+  --color-ink-text: #e4e7f1;
+  --color-ink-muted: #8b93ab;
+
+  /* Landing / input side surfaces */
+  --color-paper: #faf9f6;
+  --color-paper-muted: #f0eee8;
+  --color-slate-text: #2b3040;
+
+  /* Semantic verdict colors — used functionally (Go/Refine/Pivot), never decoratively */
+  --color-signal-go: #34d399;
+  --color-signal-go-dim: #0f2b23;
+  --color-signal-refine: #f5b14c;
+  --color-signal-refine-dim: #2e2410;
+  --color-signal-pivot: #e24c4c;
+  --color-signal-pivot-dim: #2e1414;
+
+  /* Single interactive brand accent, distinct from the verdict traffic-light colors */
+  --color-brand: #4c4ddc;
+  --color-brand-dim: #3d3eb3;
+
+  --font-display: var(--font-fraunces), Georgia, "Times New Roman", serif;
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, "SF Mono", monospace;
+}
+
+/* Soft brand-tinted glow, used behind the hero and the verdict ring —
+   a color-mix so it always tracks --color-brand instead of drifting out
+   of sync as a separate hardcoded value. */
+@supports (color: color-mix(in srgb, red, blue)) {
+  :root {
+    --color-brand-glow: color-mix(in srgb, var(--color-brand) 28%, transparent);
+  }
+}
+
+/* Faint dot grid for the hero background. CSS-only, no image asset. */
+.bg-grid-faint {
+  background-image: radial-gradient(var(--color-slate-text) 1px, transparent 1px);
+  background-size: 24px 24px;
+  opacity: 0.05;
+}
+
+.hero-glow {
+  background: radial-gradient(
+    ellipse 60% 50% at 50% 0%,
+    var(--color-brand-glow, rgba(76, 77, 220, 0.16)),
+    transparent 70%
+  );
+}
