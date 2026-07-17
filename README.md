@@ -2,7 +2,7 @@
 
 **An AI co-founder that turns a one-sentence startup idea into a full validation report — market sizing, financials, a roadmap, competitive landscape, and a defensible GO/REFINE/PIVOT score.**
 
-🔗 **Live demo:** _[add your Vercel URL here after deploying]_
+🔗 **Live demo:** [founder-copilot-flame.vercel.app](https://founder-copilot-flame.vercel.app/)
 
 ---
 
