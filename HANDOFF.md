@@ -47,6 +47,20 @@ description, strength, weakness) — no invented funding/valuation/user-count
 figures, since those can't be verified and go stale immediately. No pricing
 page — monetization is still an open decision, not assumed.
 
+**2026-07-17 (later still)**: Phase 3 — gave Claude the API's server-side
+`web_search` tool (`web_search_20260318`) so market sizing, competitors,
+and financial benchmarks are grounded in real, current pages instead of
+pure trained-knowledge guesses. Claude self-reports the real URLs it used
+in a new `sources` field, rendered as a clickable Sources panel on the
+Summary step. Deliberately did **not** wire up the API's native per-span
+`citations` mechanism (built for annotating prose, not structured JSON) —
+simpler and just as honest to have Claude self-report a flat sources list,
+same trust tier as everything else (never hard-throws, filtered on the way
+in). Verified for real — not just "the code compiles" — by opening several
+of the returned URLs and confirming the page titles match the claimed
+labels. See "Decisions worth knowing" for the `allowed_callers: ["direct"]`
+latency fix that came out of this.
+
 ## Architecture
 
 - Next.js 15 (App Router), TypeScript, Tailwind v4 (CSS-first config in
@@ -112,6 +126,24 @@ page — monetization is still an open decision, not assumed.
   longer than a couple of animation frames), so html2canvas sometimes
   captured stale/mid-transition DOM and threw. Rendering everything
   off-screen up front sidesteps the race entirely.
+- **`app/api/generate/route.ts` uses `web_search_20260318` with
+  `allowed_callers: ["direct"]`, not the tool's default.** The default for
+  this tool version routes every search through dynamic filtering (code
+  execution under the hood) — measured over **8 minutes** for a single
+  report with the default before switching. `["direct"]` skips that and
+  brought it to ~2-3 minutes. We don't need dynamic filtering's
+  context-trimming benefit since the final output is compact structured
+  JSON, not long prose quoting search results. `max_uses: 4`,
+  `export const maxDuration = 280` on the route (Vercel would otherwise
+  kill the function before a search-heavy generation finishes — verified
+  live on the actual Vercel deployment, not just locally, since dev mode
+  doesn't enforce that timeout at all).
+- **Text-block concatenation in the API route is load-bearing, not
+  defensive.** Web search's citation mechanism can split Claude's single
+  JSON response across multiple sequential `text` content blocks (confirmed
+  against Anthropic's live docs). The route concatenates every `text` block
+  in `response.content`, not just the first — taking only the first would
+  silently truncate the JSON on some requests.
 
 ## Decisions worth knowing before you change them
 
@@ -150,12 +182,13 @@ page — monetization is still an open decision, not assumed.
 
 ## What's untested
 
-As of 2026-07-17, the full 5-step report journey, both marketing pages, and
-PDF export were visually confirmed by an AI in a real browser session
-(desktop width only — not yet checked at mobile width), including a real
-Claude-generated report covering all 5 steps and a real PDF download that
-correctly captures all 5 pages. Not yet re-verified by the founder in his
-own browser.
+As of 2026-07-17, the full 5-step report journey, both marketing pages, web
+search grounding, and PDF export were all visually confirmed by an AI in a
+real browser session (desktop width only — not yet checked at mobile
+width), including a real Claude-generated report on both localhost and the
+live Vercel deployment, a real PDF download, and manually opening several
+of the returned `sources` URLs to confirm they're real pages (not
+hallucinated). Not yet re-verified by the founder in his own browser.
 
 ## Competitive benchmark
 
@@ -175,15 +208,18 @@ it's wanted.
 
 1. Possibly upgrade PDF export to real selectable text.
 2. Harden rate limiting before any wider traffic — generation now takes
-   longer (~90s) with the extra report content, worth re-checking the
-   8 req/hour window still makes sense. Note: the in-memory rate limiter
-   ([[project-founder-copilot-architecture]] / `lib/rate-limit.ts`) resets
-   on every Vercel serverless cold start — now that this is actually
-   deployed, that limitation is live, not hypothetical.
-3. Mobile-width visual check for the Phase 2 additions (report journey,
-   marketing pages) — not yet done by an AI or the founder.
+   ~2-3 minutes (search-heavy, up from ~90s), worth re-checking the
+   8 req/hour window still makes sense. The in-memory rate limiter
+   (`lib/rate-limit.ts`) resets on every Vercel serverless cold start —
+   live, not hypothetical, now that this is actually deployed.
+3. Mobile-width visual check for the report journey + marketing pages —
+   not yet done by an AI or the founder.
 4. Fill in the real name on the MIT `LICENSE` file if it ever needs to
    change (currently "Zaeem Ather").
+5. The four other utility ideas discussed but not started: standalone
+   calculators (LTV/CAC/break-even/runway), a "recalculate with your
+   numbers" override on financials, an interactive milestone checklist on
+   Roadmap, and a risk-matrix visualization for the stop signals.
 
 ## Working with the founder
 
