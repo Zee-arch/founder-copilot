@@ -13,8 +13,17 @@ marketing plans, investor decks — all later phases, not started).
 ## Current status
 
 v1 works end-to-end and has been tested with a real Anthropic API key by the
-founder (not just mocked). Runs locally via `npm run dev`. **Not yet deployed
-publicly** — no live URL exists yet. Git is still not set up for this project.
+founder (not just mocked). Runs locally via `npm run dev`.
+
+**2026-07-17 (later same day):** Git set up, pushed to GitHub at
+`github.com/Zee-arch/founder-copilot` (public — the founder wants to
+showcase this as his own project for job applications), and deployed to
+Vercel at `founder-copilot-flame.vercel.app`. Live deploy end-to-end tested
+in a real browser (generate → full 5-step report) with the real
+`ANTHROPIC_API_KEY` set in Vercel's dashboard by the founder himself (never
+entered by AI, per policy). README rewritten for a technical/recruiter
+audience — includes an honest one-line disclosure that development was
+AI-assisted (Claude Code).
 
 **2026-07-14**: Did a visual-polish pass (Phase 1 of closing the design gap
 with ideaproof.io — see "Competitive benchmark" below). Added `lucide-react`
@@ -164,16 +173,17 @@ it's wanted.
 
 ## Immediate next steps (discussed, not yet done)
 
-1. Set up git for this project if not already done.
-2. Deploy to **Vercel** (not Render/Railway — this is a Next.js app, Vercel
-   is the native fit) so the founder's friends can test via a public URL.
-   Needs a GitHub repo + the `ANTHROPIC_API_KEY` env var set in Vercel.
-3. Possibly upgrade PDF export to real selectable text.
-4. Harden rate limiting before any wider traffic — generation now takes
+1. Possibly upgrade PDF export to real selectable text.
+2. Harden rate limiting before any wider traffic — generation now takes
    longer (~90s) with the extra report content, worth re-checking the
-   8 req/hour window still makes sense.
-5. Mobile-width visual check for the Phase 2 additions (report journey,
+   8 req/hour window still makes sense. Note: the in-memory rate limiter
+   ([[project-founder-copilot-architecture]] / `lib/rate-limit.ts`) resets
+   on every Vercel serverless cold start — now that this is actually
+   deployed, that limitation is live, not hypothetical.
+3. Mobile-width visual check for the Phase 2 additions (report journey,
    marketing pages) — not yet done by an AI or the founder.
+4. Fill in the real name on the MIT `LICENSE` file if it ever needs to
+   change (currently "Zaeem Ather").
 
 ## Working with the founder
 
