@@ -2,19 +2,28 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Sparkles, Timer, ShieldCheck } from "lucide-react";
+import { Check, Globe2, Sparkles, Timer, ShieldCheck } from "lucide-react";
 import type { ValidationReport } from "@/lib/types";
 import { SCORE_CRITERIA } from "@/lib/types";
 import { SCORE_CRITERION_ICONS } from "@/lib/report-icons";
 import { useReport } from "@/lib/report-context";
 import { SiteHeader } from "@/components/SiteHeader";
 
-const GENERATION_STEPS = ["Reading your idea", "Scoring 8 factors", "Building your report"];
-const STEP_INTERVAL_MS = 1800;
+// Durations are weighted toward reality, not evenly spaced — searching is
+// genuinely the longest phase (multiple sequential web_search calls), so it
+// gets most of the runway instead of the progress bar sitting frozen on the
+// last step for two-plus minutes.
+const GENERATION_STEPS = [
+  { label: "Reading your idea", durationMs: 3000 },
+  { label: "Searching the web for real data", durationMs: 130000 },
+  { label: "Scoring 8 factors", durationMs: 15000 },
+  { label: "Building your report", durationMs: Infinity },
+];
 
 const TRUST_BADGES = [
   { icon: ShieldCheck, label: "No login required" },
-  { icon: Timer, label: "~90 seconds" },
+  { icon: Timer, label: "~2-3 minutes" },
+  { icon: Globe2, label: "Grounded with live web search" },
   { icon: Sparkles, label: "Powered by Claude" },
 ];
 
@@ -23,10 +32,15 @@ function GenerationProgress({ idea }: { idea: string }) {
 
   useEffect(() => {
     setStepIndex(0);
-    const interval = setInterval(() => {
-      setStepIndex((i) => Math.min(i + 1, GENERATION_STEPS.length - 1));
-    }, STEP_INTERVAL_MS);
-    return () => clearInterval(interval);
+    const timeouts: ReturnType<typeof setTimeout>[] = [];
+    let elapsed = 0;
+
+    for (let i = 1; i < GENERATION_STEPS.length; i++) {
+      elapsed += GENERATION_STEPS[i - 1].durationMs;
+      timeouts.push(setTimeout(() => setStepIndex(i), elapsed));
+    }
+
+    return () => timeouts.forEach(clearTimeout);
   }, [idea]);
 
   return (
@@ -36,7 +50,7 @@ function GenerationProgress({ idea }: { idea: string }) {
           const isDone = i < stepIndex;
           const isCurrent = i === stepIndex;
           return (
-            <div key={step} className="flex items-center gap-3">
+            <div key={step.label} className="flex items-center gap-3">
               <span
                 className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border transition-colors ${
                   isDone
@@ -57,7 +71,7 @@ function GenerationProgress({ idea }: { idea: string }) {
               <span
                 className={`text-sm ${isCurrent ? "font-medium text-slate-text" : isDone ? "text-slate-500" : "text-slate-400"}`}
               >
-                {step}
+                {step.label}
               </span>
             </div>
           );

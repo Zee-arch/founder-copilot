@@ -9,8 +9,8 @@ import {
   PolarRadiusAxis,
   ResponsiveContainer,
 } from "recharts";
-import { Minus, Plus } from "lucide-react";
-import type { MarketSizing, ScoreCriterion, Verdict } from "@/lib/types";
+import { ExternalLink, Minus, Plus } from "lucide-react";
+import type { MarketSizing, ScoreCriterion, Source, Verdict } from "@/lib/types";
 import { SCORE_CRITERION_ICONS, VERDICT_ICONS } from "@/lib/report-icons";
 
 type Tone = "go" | "refine" | "pivot";
@@ -287,6 +287,33 @@ function SignalsPanel({ goSignals, stopSignals }: { goSignals: string[]; stopSig
   );
 }
 
+function SourcesPanel({ sources }: { sources: Source[] }) {
+  if (sources.length === 0) return null;
+
+  return (
+    <div className="rounded-2xl border border-ink-border bg-ink-surface p-6">
+      <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-muted">
+        Sources — grounded with live web search
+      </p>
+      <ul className="mt-4 space-y-2.5">
+        {sources.map((source, i) => (
+          <li key={i}>
+            <a
+              href={source.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-start gap-2 text-sm leading-relaxed text-ink-text underline decoration-ink-border underline-offset-4 hover:text-brand"
+            >
+              <ExternalLink className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-muted" />
+              {source.label}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function Snapshot({
   overallScore,
   verdict,
@@ -295,6 +322,7 @@ export function Snapshot({
   market,
   goSignals,
   stopSignals,
+  sources,
   animate = true,
 }: {
   overallScore: number;
@@ -304,6 +332,7 @@ export function Snapshot({
   market: MarketSizing;
   goSignals: string[];
   stopSignals: string[];
+  sources: Source[];
   animate?: boolean;
 }) {
   return (
@@ -317,6 +346,7 @@ export function Snapshot({
 
       <MarketPanel market={market} />
       <SignalsPanel goSignals={goSignals} stopSignals={stopSignals} />
+      <SourcesPanel sources={sources} />
 
       <p className="font-mono text-[11px] leading-relaxed text-ink-muted">
         Overall score is the average of the 8 factors above — not a separate model judgment. Market

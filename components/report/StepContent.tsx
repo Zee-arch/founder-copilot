@@ -27,6 +27,7 @@ export function ReportStepContent({
           market={report.market}
           goSignals={report.goSignals}
           stopSignals={report.stopSignals}
+          sources={report.sources}
           animate={animate}
         />
       );

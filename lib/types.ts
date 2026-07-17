@@ -90,6 +90,11 @@ export type CompetitiveLandscape = {
   yourEdge: string; // the differentiation opportunity, one short paragraph
 };
 
+export type Source = {
+  label: string; // what this source supports, e.g. "Global market size"
+  url: string; // must be a real URL Claude actually retrieved via web_search
+};
+
 export type ValidationReport = {
   headline: string; // one-line qualitative judgment on the idea
   scores: ScoreCriterion[]; // exactly 8, matching SCORE_CRITERIA order
@@ -100,6 +105,7 @@ export type ValidationReport = {
   financials: Financials;
   roadmap: Roadmap;
   competitive: CompetitiveLandscape;
+  sources: Source[]; // real pages Claude retrieved via web_search — empty if it didn't search
   // Computed in code from `scores` — never trusted from the model directly,
   // so the number on screen always matches the math behind it.
   overallScore: number;

@@ -11,9 +11,12 @@ import {
   type Roadmap,
   type RevenueStream,
   type ScoreCriterion,
+  type Source,
   type ValidationReport,
   type Verdict,
 } from "@/lib/types";
+
+const HTTP_URL_PATTERN = /^https?:\/\//i;
 
 function extractJson(text: string) {
   const trimmed = text.trim();
@@ -72,7 +75,10 @@ type RawJson = {
   };
   roadmap?: { mvpTimeline?: unknown; milestones?: RawMilestone[]; quickWins?: unknown[] };
   competitive?: { competitors?: RawCompetitor[]; yourEdge?: unknown };
+  sources?: RawSource[];
 };
+
+type RawSource = { label?: unknown; url?: unknown };
 
 export function parseValidationReport(text: string): ValidationReport {
   const parsed = JSON.parse(extractJson(text)) as RawJson;
@@ -187,6 +193,27 @@ export function parseValidationReport(text: string): ValidationReport {
       ? parsed.headline.trim()
       : "Validation report generated.";
 
+  // --- sources: only real-looking URLs Claude claims to have retrieved via
+  // web_search — this can't be cryptographically verified, so it's held to
+  // the same "trust the instruction, filter defensively" tier as everything
+  // else, never the hard-throw tier.
+  const seenSourceUrls = new Set<string>();
+  const sources: Source[] = (Array.isArray(parsed.sources) ? parsed.sources : [])
+    .filter(
+      (s): s is RawSource =>
+        typeof s?.label === "string" &&
+        s.label.trim().length > 0 &&
+        typeof s?.url === "string" &&
+        HTTP_URL_PATTERN.test(s.url.trim()),
+    )
+    .map((s) => ({ label: str(s.label), url: (s.url as string).trim() }))
+    .filter((s) => {
+      if (seenSourceUrls.has(s.url)) return false;
+      seenSourceUrls.add(s.url);
+      return true;
+    })
+    .slice(0, 8);
+
   return {
     headline,
     scores,
@@ -197,6 +224,7 @@ export function parseValidationReport(text: string): ValidationReport {
     financials,
     roadmap,
     competitive,
+    sources,
     overallScore,
     verdict,
   };
