@@ -13,15 +13,15 @@ import { ExternalLink, Minus, Plus } from "lucide-react";
 import type { MarketSizing, ScoreCriterion, Source, Verdict } from "@/lib/types";
 import { SCORE_CRITERION_ICONS, VERDICT_ICONS } from "@/lib/report-icons";
 
-type Tone = "go" | "refine" | "pivot";
+export type Tone = "go" | "refine" | "pivot";
 
-function tierForScore(score: number): Tone {
+export function tierForScore(score: number): Tone {
   if (score >= 70) return "go";
   if (score >= 45) return "refine";
   return "pivot";
 }
 
-const TONE_COLOR: Record<Tone, string> = {
+export const TONE_COLOR: Record<Tone, string> = {
   go: "var(--color-signal-go)",
   refine: "var(--color-signal-refine)",
   pivot: "var(--color-signal-pivot)",
@@ -69,7 +69,7 @@ function useCountUp(target: number, enabled: boolean, durationMs = 900) {
   return value;
 }
 
-function VerdictGauge({
+export function VerdictGauge({
   score,
   verdict,
   headline,
