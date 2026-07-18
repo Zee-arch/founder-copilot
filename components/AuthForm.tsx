@@ -7,6 +7,13 @@ import { GoogleIcon } from "@/components/GoogleIcon";
 
 type Mode = "login" | "sign-up";
 
+// Supabase's AuthError.message is normally a string, but this guards against
+// any non-Error rejection (e.g. a network failure) rendering "[object Object]".
+function errorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) return error.message;
+  return fallback;
+}
+
 const COPY: Record<Mode, { title: string; subtitle: string; submitLabel: string; submittingLabel: string }> = {
   login: {
     title: "Log in",
@@ -44,7 +51,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
     if (mode === "login") {
       const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
       if (signInError) {
-        setError(signInError.message);
+        setError(errorMessage(signInError, "Couldn't log in. Check your email and password and try again."));
         setIsSubmitting(false);
         return;
       }
@@ -59,7 +66,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
     });
 
     if (signUpError) {
-      setError(signUpError.message);
+      setError(errorMessage(signUpError, "Couldn't create your account. Please try again."));
       setIsSubmitting(false);
       return;
     }
@@ -80,7 +87,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
     });
 
     if (oauthError) {
-      setError(oauthError.message);
+      setError(errorMessage(oauthError, "Couldn't sign in with Google. Please try again."));
       setIsGoogleLoading(false);
     }
     // On success the browser navigates away to Google, so no further state change here.
