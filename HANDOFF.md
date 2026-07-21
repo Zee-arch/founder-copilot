@@ -61,6 +61,73 @@ of the returned URLs and confirming the page titles match the claimed
 labels. See "Decisions worth knowing" for the `allowed_callers: ["direct"]`
 latency fix that came out of this.
 
+**2026-07-18**: Phase 4 — redesigned the landing page hero into two
+columns: the input form, plus a `ReportPreviewCard` reusing the real
+`VerdictGauge` component (exported from `Snapshot.tsx`) seeded with fixed
+sample data and clearly tagged "Example report" — an honest product
+screenshot, not an invented mockup. Added a "What you get" feature strip
+(reuses `REPORT_STEPS`), a CSS-only entrance animation, and the site's
+first `Footer`. `components/Footer.tsx` is new; not yet added to
+`how-it-works`/`about`.
+
+**2026-07-18**: Stage 1 of real accounts — the founder decided to move
+past the "no login" v1 spec and add sign-up/login. Chose **Supabase**
+(Google OAuth + email/password) over Clerk and NextAuth+Vercel Postgres.
+Scoped deliberately: **this pass only ships the auth foundation**, not
+persistence — `app/api/generate/route.ts` and `lib/report-context.tsx`
+are untouched, so generating a report while signed out still works exactly
+as before (the "No login required" badge stays true). See the new
+"Accounts (Supabase)" architecture section and "Decisions worth knowing"
+below for what shipped and the production gotchas found along the way.
+Both this and the Phase 4 landing redesign are merged to `main` and live
+on Vercel.
+
+**2026-07-21:** Diagnosed the "Invalid login credentials" issue from
+2026-07-18 by querying `auth.users`/`auth.identities` directly on the live
+Supabase project. **Not a bug** — the founder's main email
+(`zaeemather7@gmail.com`) was originally signed up via Google OAuth only,
+so it has no password credential; `signInWithPassword` against it will
+correctly fail every time. A different test account
+(`zaeemather7+foundercopilot@gmail.com`) does have a password identity and
+logs in fine. No code change made. Worth knowing for the future: if a
+"can't log in" report comes in again, check which provider(s) an account
+actually has before assuming the auth code is broken.
+
+**2026-07-21:** Stage 2 — reports now actually persist and are browsable.
+`app/api/generate/route.ts` checks `supabase.auth.getUser()` after a
+successful generation and, if signed in, inserts `{ user_id, idea, report }`
+into the `reports` table (RLS already restricted this to the owning user
+since Stage 1). This is deliberately **best-effort**: the insert is wrapped
+in its own try/catch and only `console.error`s on failure — a DB hiccup
+must never turn a successful generation into a failed response. Anonymous
+generation is untouched (`getUser()` returns null, insert is skipped
+entirely).
+
+New `/dashboard` (`app/dashboard/page.tsx`, server component) redirects
+signed-out visitors to `/login?next=/dashboard`, otherwise lists the
+signed-in user's saved reports (idea, date, score, verdict badge) via
+`components/dashboard/ReportCard.tsx`. Clicking a card doesn't fetch
+anything new — it calls the existing `useReport().setReportData()` and
+routes to `/report/summary`, reusing the exact same `sessionStorage`-backed
+context and step UI that a fresh generation uses. No new report-viewing
+code path was built.
+
+Added `next` redirect support end-to-end so a signed-out visit to a
+protected route (right now just `/dashboard`) returns there after auth:
+`AuthForm` takes an optional `next` prop threaded through to both the
+password-login redirect and Google's `redirectTo`; `/login` and `/sign-up`
+read `?next=` from `searchParams` and pass it down; `/auth/callback`
+already supported `next` from Stage 1 and needed no changes.
+`SiteHeader`'s signed-in state now also shows a "Dashboard" link.
+
+**Not yet verified in a real browser session** — this pass was typechecked
+and the signed-out redirect (`/dashboard` → `/login?next=/dashboard`) was
+confirmed live, but the actual signed-in path (generate while logged in →
+row appears in `reports` → shows on `/dashboard` → clicking it opens the
+right report) needs a real login, which requires a password Claude
+doesn't have and won't ask for. **Founder: please click through this once**
+before treating Stage 2 as done — see "Immediate next steps" below.
+
 ## Architecture
 
 - Next.js 15 (App Router), TypeScript, Tailwind v4 (CSS-first config in
@@ -145,6 +212,81 @@ latency fix that came out of this.
   in `response.content`, not just the first — taking only the first would
   silently truncate the JSON on some requests.
 
+## Accounts (Supabase) — Stage 1 & 2
+
+- `lib/supabase/client.ts` / `lib/supabase/server.ts` / `lib/supabase/middleware.ts`
+  + root `middleware.ts` — standard `@supabase/ssr` session wiring (not the
+  deprecated `@supabase/auth-helpers-nextjs`). Next.js 15's `cookies()` is
+  async — `createClient()` in `server.ts` is itself async because of this.
+  `middleware.ts`, not `proxy.ts` — this app is on Next 15, `proxy.ts` is
+  the Next 16 convention some current Supabase examples default to.
+- `components/AuthForm.tsx` — shared client form for both `/login` and
+  `/sign-up`, Google OAuth + email/password. `app/actions/auth.ts` holds
+  the server actions (`signOut`, `confirmEmailSignup`).
+- `app/auth/callback/route.ts` — OAuth `code` exchange (Google).
+- `app/auth/confirm/page.tsx` — **a page, not a route handler.** Email/
+  password confirmation used to auto-verify on the GET request that loaded
+  it; real-world testing found Gmail's spam-link scanner (and similar
+  automated scanners on other providers) silently visits links in incoming
+  mail, which burned the single-use token before the actual user clicked
+  it — the person saw a false "invalid or expired" error even though the
+  account really was confirmed. Fixed by making the GET just render a
+  "Confirm email address" button, with the actual `verifyOtp` call only
+  happening on the POST (a Server Action, `confirmEmailSignup` in
+  `app/actions/auth.ts`) that the button triggers. **Any future
+  email-link flow in this app must follow the same rule: the GET that
+  loads the page must never have a side effect.**
+- `components/SiteHeader.tsx` — now reads the session server-side and
+  shows signed-in state (email + sign-out) vs. Log in/Sign up links.
+- `supabase/schema.sql` — a `reports` table (id, user_id, idea, report
+  jsonb, created_at) with RLS restricting rows to `auth.uid() = user_id`.
+  As of Stage 2, `app/api/generate/route.ts` inserts into it for signed-in
+  users (best-effort, never blocks the response — see status log above).
+- `app/dashboard/page.tsx` — lists a signed-in user's saved reports
+  (server component, redirects to `/login?next=/dashboard` if signed out).
+  `components/dashboard/ReportCard.tsx` — clicking a saved report doesn't
+  re-fetch anything; it calls `useReport().setReportData()` and routes to
+  `/report/summary`, reusing the same context + step UI a fresh generation
+  uses. Verdict badge styling (`TONE_COLOR`/`TONE_DIM` by verdict) is
+  duplicated from `Snapshot.tsx` rather than imported — those constants
+  aren't exported there and it's 3 lines; revisit if a third place needs
+  the same mapping.
+- `next` redirect support was added to the auth flow so a signed-out visit
+  to a protected route returns there after login: `AuthForm` takes an
+  optional `next` prop (default `/`) used for both the password-login
+  redirect and Google's `redirectTo`; `/login` and `/sign-up` read `?next=`
+  from `searchParams`. `/auth/callback` already supported this from Stage 1.
+- Env vars: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+  (documented in `.env.local.example`). No service-role key used anywhere —
+  RLS + the user's own JWT is sufficient for everything shipped so far.
+- **Production email gotchas, worth knowing before touching this again:**
+  - Supabase's *default* (no custom SMTP) email templates put the confirm
+    token in a URL hash fragment (`#access_token=...`), which a
+    server-side route can never read (fragments never reach the server).
+    Custom SMTP is required to even edit the template body — Supabase's
+    dashboard locks template editing behind having custom SMTP configured.
+    Ended up on **Resend** (free tier). The "Confirm signup" template body
+    must use `{{ .RedirectTo }}&token_hash={{ .TokenHash }}&type=email`,
+    not the default `{{ .ConfirmationURL }}` — and not `{{ .SiteURL }}`
+    either, since that's a single global setting that would break either
+    local dev or production depending which one it's pointed at;
+    `{{ .RedirectTo }}` correctly resolves to wherever the signup actually
+    happened.
+  - Resend's free/onboarding sender (`onboarding@resend.dev`) will **only
+    deliver to the exact email address the Resend account itself is
+    registered under** — not `+alias` variants of it. Silently 403s
+    (visible in Resend's own logs, not surfaced to Supabase's client
+    response) for anything else. Don't burn time re-debugging this; it's
+    expected until a real domain is verified in Resend.
+  - Supabase's Auth API returns `200`/success to the client for
+    `signUp`/`resend` calls **even when it doesn't actually send anything**
+    — e.g. when the email already belongs to a confirmed user (via any
+    provider, including Google) — to avoid leaking which emails are
+    registered. If testing shows a "successful" response but nothing ever
+    arrives and nothing shows in Resend's logs, check
+    Authentication → Users for an existing confirmed account with that
+    email before assuming SMTP is broken.
+
 ## Decisions worth knowing before you change them
 
 - **Model**: `claude-sonnet-4-6` (current stable Sonnet as of July 2026 —
@@ -176,9 +318,13 @@ latency fix that came out of this.
   include funding amounts, valuations, or user counts for competitors,
   since those can't be verified here and go stale immediately. Don't add
   those fields back without re-opening the "stay strict" conversation.
-- **No user accounts / no login** — this is intentional per the original
-  v1 spec (`V1_SPEC.md`), not an oversight. Report state lives in
-  `sessionStorage` via `lib/report-context.tsx`, not a database.
+- **Accounts now exist (Stage 1, 2026-07-18) — the "no login" v1 spec has
+  been deliberately superseded, don't assume the old README/spec wording
+  is still current.** See "Accounts (Supabase)" above. Generation itself
+  is still unauthenticated and un-gated on purpose — signing in is
+  additive (will unlock saved report history once Stage 2 ships), not a
+  requirement. `lib/report-context.tsx`'s `sessionStorage` behavior is
+  unchanged; nothing writes to the database yet.
 
 ## What's untested
 
@@ -189,6 +335,23 @@ width), including a real Claude-generated report on both localhost and the
 live Vercel deployment, a real PDF download, and manually opening several
 of the returned `sources` URLs to confirm they're real pages (not
 hallucinated). Not yet re-verified by the founder in his own browser.
+
+As of 2026-07-18: Google OAuth sign-in verified working end-to-end in
+production (a real user was created and signed in). Email/password
+sign-up + the hardened click-to-confirm flow verified working end-to-end
+locally. Password login itself against a real email/password account has
+still not been directly re-tested in production (see 2026-07-21 diagnosis
+above for why the original test looked broken but wasn't) — worth a real
+click-through before considering the email/password path fully verified
+in production.
+
+As of 2026-07-21: Stage 2 (report persistence + `/dashboard`) is
+typechecked and the signed-out redirect was confirmed live, but **the
+signed-in path itself is unverified** — needs a real login, which requires
+a password Claude doesn't have. Founder, please click through once:
+log in → generate a report → confirm a row appears in Supabase's `reports`
+table (Table Editor) → visit `/dashboard` → confirm it's listed → click it
+→ confirm it opens the same report at `/report/summary`.
 
 ## Competitive benchmark
 
@@ -206,20 +369,35 @@ it's wanted.
 
 ## Immediate next steps (discussed, not yet done)
 
-1. Possibly upgrade PDF export to real selectable text.
-2. Harden rate limiting before any wider traffic — generation now takes
+1. **Founder: verify Stage 2 signed-in path for real** (see "What's
+   untested" above) — code is written and typechecked but the actual
+   generate → persist → dashboard → reopen loop has not run with a real
+   session.
+2. The four utility ideas discussed but not started: standalone
+   calculators (LTV/CAC/break-even/runway), a "recalculate with your
+   numbers" override on financials, an interactive milestone checklist on
+   Roadmap, and a risk-matrix visualization for the stop signals. Now that
+   `/dashboard` exists, these can be built dashboard-native as originally
+   planned.
+3. Possibly upgrade PDF export to real selectable text.
+4. Harden rate limiting before any wider traffic — generation now takes
    ~2-3 minutes (search-heavy, up from ~90s), worth re-checking the
    8 req/hour window still makes sense. The in-memory rate limiter
    (`lib/rate-limit.ts`) resets on every Vercel serverless cold start —
    live, not hypothetical, now that this is actually deployed.
-3. Mobile-width visual check for the report journey + marketing pages —
+5. Mobile-width visual check for the report journey + marketing pages —
    not yet done by an AI or the founder.
-4. Fill in the real name on the MIT `LICENSE` file if it ever needs to
+6. Fill in the real name on the MIT `LICENSE` file if it ever needs to
    change (currently "Zaeem Ather").
-5. The four other utility ideas discussed but not started: standalone
-   calculators (LTV/CAC/break-even/runway), a "recalculate with your
-   numbers" override on financials, an interactive milestone checklist on
-   Roadmap, and a risk-matrix visualization for the stop signals.
+7. **Strategic pivot (2026-07-18):** the founder wants to step back from
+   feature-by-feature execution and think about product direction more
+   holistically before continuing — where the product needs to reach,
+   working backward from there, and how to use AI more deeply in the
+   product itself (not just as the report-generation engine). Worth
+   reading README.md's "founder operating system" long-term vision before
+   that conversation, and considering whether future features (PRDs,
+   landing pages, decks) bolt onto the current one-shot-report data model
+   or need a more unified per-idea workspace.
 
 ## Working with the founder
 

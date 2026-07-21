@@ -3,6 +3,7 @@ import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import { buildValidationUserPrompt, VALIDATION_SYSTEM_PROMPT } from "@/lib/prompt";
 import { parseValidationReport } from "@/lib/parse-report";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { createClient } from "@/lib/supabase/server";
 
 const MAX_IDEA_LENGTH = 500;
 
@@ -130,6 +131,26 @@ export async function POST(request: Request) {
     }
 
     const report = parseValidationReport(text);
+
+    // Best-effort save for signed-in users — generation already succeeded,
+    // so a persistence failure (RLS misconfig, transient DB error, etc.)
+    // should never turn into a failed response. Anonymous generation is
+    // unaffected: `getUser()` just returns null and this is skipped.
+    try {
+      const supabase = await createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (user) {
+        const { error: insertError } = await supabase.from("reports").insert({ user_id: user.id, idea, report });
+        if (insertError) {
+          console.error("[generate] failed to save report:", insertError.message);
+        }
+      }
+    } catch (persistError) {
+      console.error("[generate] report persistence error:", persistError);
+    }
 
     return Response.json({ idea, report });
   } catch (error) {

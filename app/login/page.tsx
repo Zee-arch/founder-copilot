@@ -10,9 +10,9 @@ export const metadata: Metadata = {
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; next?: string }>;
 }) {
-  const { error } = await searchParams;
+  const { error, next } = await searchParams;
 
   return (
     <div className="min-h-screen bg-paper text-slate-text">
@@ -27,7 +27,7 @@ export default async function LoginPage({
               {error}
             </div>
           )}
-          <AuthForm mode="login" />
+          <AuthForm mode="login" next={next || "/"} />
         </section>
       </div>
     </div>

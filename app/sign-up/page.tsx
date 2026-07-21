@@ -7,7 +7,13 @@ export const metadata: Metadata = {
   description: "Create a FounderCopilot account to save your validation reports.",
 };
 
-export default function SignUpPage() {
+export default async function SignUpPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ next?: string }>;
+}) {
+  const { next } = await searchParams;
+
   return (
     <div className="min-h-screen bg-paper text-slate-text">
       <div className="relative overflow-hidden">
@@ -16,7 +22,7 @@ export default function SignUpPage() {
         <SiteHeader />
 
         <section className="relative mx-auto max-w-md px-6 pt-12 sm:pt-16">
-          <AuthForm mode="sign-up" />
+          <AuthForm mode="sign-up" next={next || "/"} />
         </section>
       </div>
     </div>

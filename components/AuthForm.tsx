@@ -29,7 +29,7 @@ const COPY: Record<Mode, { title: string; subtitle: string; submitLabel: string;
   },
 };
 
-export function AuthForm({ mode }: { mode: Mode }) {
+export function AuthForm({ mode, next = "/" }: { mode: Mode; next?: string }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -55,14 +55,14 @@ export function AuthForm({ mode }: { mode: Mode }) {
         setIsSubmitting(false);
         return;
       }
-      window.location.href = "/";
+      window.location.href = next;
       return;
     }
 
     const { error: signUpError } = await supabase.auth.signUp({
       email,
       password,
-      options: { emailRedirectTo: `${window.location.origin}/auth/confirm?next=/` },
+      options: { emailRedirectTo: `${window.location.origin}/auth/confirm?next=${encodeURIComponent(next)}` },
     });
 
     if (signUpError) {
@@ -83,7 +83,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
     const supabase = createClient();
     const { error: oauthError } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo: `${window.location.origin}/auth/callback` },
+      options: { redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}` },
     });
 
     if (oauthError) {
