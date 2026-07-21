@@ -318,6 +318,57 @@ couple of the Sources panel links yourself** before treating this as
 done, the same way the original Claude+search grounding was verified
 before being trusted.
 
+**2026-07-22 (same day): competitor funding/valuation/user-count figures
+allowed back in, but only when sourced.** The "Competitor profiles are
+qualitative only" policy (see "Decisions worth knowing") was a direct
+consequence of not having grounding — now that grounding is back, the
+founder asked to allow these fields again, strictly gated on a real
+source from this session's search, never training knowledge.
+
+Implemented so a fabricated figure structurally can't reach the UI, not
+just "the prompt asks nicely": `lib/types.ts` adds `SourcedFigure = {
+value, source: Source }` — there is no type shape for "a figure without a
+source." `Competitor` gets three optional fields (`funding`, `valuation`,
+`userCount`), each a `SourcedFigure` or simply absent. The model reports
+`{ value, url }` for a figure in its JSON (it has to — only the model
+knows contextually which search result backs which specific competitor's
+claim), but `lib/parse-report.ts`'s new `resolveSourcedFigure()`
+**cross-checks that `url` against this session's real grounding
+sources** (the same `Source[]` built from `groundingMetadata` for the
+top-level Sources panel) before accepting it — an unmatched or missing
+URL means the field is silently omitted, never included with a
+best-guess. The label shown in the UI is always the verified source's
+real title, never anything the model wrote. Same "never fabricate, fall
+back gracefully" tier as market sizing — not the hard-throw tier
+scores/sections use, so a bad figure never breaks report generation.
+
+`parseValidationReport()`'s signature changed to
+`(text, groundedSources: Source[])` — it now takes the grounding sources
+as a parameter instead of (the already-removed) trying to parse a
+`sources` field from the model's own JSON, and sets `report.sources`
+directly from that parameter. `app/api/generate/route.ts` simplified to
+match: `parseValidationReport(text, sources)` instead of the previous
+`{ ...parseValidationReport(text), sources }` override-after-the-fact.
+
+UI: `components/report/CompetitiveLandscape.tsx` renders a row of small
+pill-shaped linked stats (`CompetitorSourcedStats`) below a competitor's
+strength/weakness — only for whichever of funding/valuation/userCount are
+actually present, nothing rendered for a competitor with none. Each pill
+links to the real source URL (`target="_blank"`, verified `source.label`
+as the tooltip). The footer disclaimer was reworded from "deliberately
+left out" to describe the new conditional-sourcing policy accurately.
+
+**Not yet live-verified — same blocker as the grounding restoration
+above, not a new one.** Typechecked, linted, and the request path
+confirmed reaching Gemini correctly (a real generation attempt just now
+still hit the same exhausted quota from earlier testing — `429`, no
+crash, handled cleanly). Zero real competitor figures have been seen
+rendered. Once quota resets and a real generation runs, specifically
+check: does at least one competitor show a sourced figure (not every
+report will have one — some ideas' competitors just won't have a public
+figure Gemini's search turns up, which is correct behavior, not a bug),
+does its link actually open a real page, and does the value look sane.
+
 ## Architecture
 
 - Next.js 15 (App Router), TypeScript, Tailwind v4 (CSS-first config in
@@ -519,11 +570,16 @@ before being trusted.
   certify it. The prompt explicitly
   forbids fabricating false-precision numbers. Keep the "(estimate)"
   framing in the UI — don't let it drift into looking like sourced data.
-- **Competitor profiles are qualitative only** — name, one-line description,
-  one strength, one weakness. The prompt explicitly tells the model not to
-  include funding amounts, valuations, or user counts for competitors,
-  since those can't be verified here and go stale immediately. Don't add
-  those fields back without re-opening the "stay strict" conversation.
+- **Competitor profiles are qualitative by default; quantitative fields
+  (funding/valuation/userCount) are allowed as of 2026-07-22, but ONLY
+  when cross-checked against a real grounding source** — see the
+  2026-07-22 status log entry. This was a direct policy change tied to
+  grounding being back on; if grounding ever goes off again, these fields
+  will silently stop appearing (no source to match against) rather than
+  needing a prompt change, but don't assume the underlying "never
+  fabricate" policy itself has loosened — it's enforced at the type level
+  in `lib/types.ts` (`SourcedFigure` requires a `Source`), not just by
+  asking the model nicely.
 - **Accounts now exist (Stage 1, 2026-07-18) — the "no login" v1 spec has
   been deliberately superseded, don't assume the old README/spec wording
   is still current.** See "Accounts (Supabase)" above. Generation itself

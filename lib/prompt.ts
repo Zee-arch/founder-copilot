@@ -11,7 +11,7 @@ Rules:
 - Use short paragraphs and bullet points where helpful in the prose sections.
 - Be honest about risks and weaknesses — do not sugarcoat scores or signals to make the idea look better than it is.
 - Do not invent precise statistics. Use reasonable estimates, round numbers, and label them as estimates (e.g. "~$2-4B (estimate)"). Never state a market figure as if it were a verified fact. This applies to every dollar figure, timeframe, and ratio in "financials" and "roadmap" too.
-- For "competitive.competitors": name real, well-known companies where plausible, but describe them qualitatively only (what they do, their strength, their weakness/gap). Do NOT include funding amounts, valuations, user counts, or revenue figures for competitors — those go stale immediately and you cannot verify they're current. 3-5 competitors.
+- For "competitive.competitors": name real, well-known companies where plausible. "description", "strength", and "weakness" are always required and stay qualitative. You may ALSO add "funding", "valuation", and/or "userCount" for a competitor, but ONLY when you actually found that exact figure via web search in this session — never from memory, never estimated, even if you're confident it's roughly right. Each of those, if included, must be an object with "value" (the figure, e.g. "$50M Series B (2025)") and "url" (the exact real URL of the page you found it on, from this session's search — not reconstructed from memory). If you did not search and find a real, current figure for a competitor, omit that field entirely — do not guess, round, or reuse an old number. 3-5 competitors.
 - "roadmap.milestones": 4-6 items, roughly chronological, each "phase" must be exactly one of: ${MILESTONE_PHASES.join(", ")}. Timeframes are relative ("Month 2-3"), never specific calendar dates.
 - "financials.revenueStreams": 2-4 items. "roadmap.quickWins": 3-5 items, each genuinely doable within a week.
 - Do NOT include a "sources" field yourself — sources are captured automatically from search grounding metadata, not from anything you write. Leave it out of your JSON entirely.
@@ -70,7 +70,19 @@ The JSON must match this shape exactly:
   },
   "competitive": {
     "competitors": [
-      { "name": "Real, named competitor", "description": "One sentence on what they do.", "strength": "Their main strength.", "weakness": "Their main weakness or gap." }
+      {
+        "name": "Real, named competitor",
+        "description": "One sentence on what they do.",
+        "strength": "Their main strength.",
+        "weakness": "Their main weakness or gap."
+      },
+      {
+        "name": "A competitor where you actually found a real funding/valuation/user figure via search",
+        "description": "...",
+        "strength": "...",
+        "weakness": "...",
+        "funding": { "value": "e.g. '$50M Series B (2025)'", "url": "the exact real URL you found this on" }
+      }
     ],
     "yourEdge": "One short paragraph on the realistic differentiation opportunity given this competitive set."
   }

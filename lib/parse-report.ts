@@ -12,11 +12,10 @@ import {
   type RevenueStream,
   type ScoreCriterion,
   type Source,
+  type SourcedFigure,
   type ValidationReport,
   type Verdict,
 } from "@/lib/types";
-
-const HTTP_URL_PATTERN = /^https?:\/\//i;
 
 function extractJson(text: string) {
   const trimmed = text.trim();
@@ -57,7 +56,16 @@ function str(value: unknown, fallback = "Not estimated"): string {
 type RawScore = { label?: unknown; score?: unknown; note?: unknown };
 type RawRevenueStream = { name?: unknown; description?: unknown };
 type RawMilestone = { title?: unknown; phase?: unknown; timeframe?: unknown };
-type RawCompetitor = { name?: unknown; description?: unknown; strength?: unknown; weakness?: unknown };
+type RawSourcedFigure = { value?: unknown; url?: unknown };
+type RawCompetitor = {
+  name?: unknown;
+  description?: unknown;
+  strength?: unknown;
+  weakness?: unknown;
+  funding?: RawSourcedFigure;
+  valuation?: RawSourcedFigure;
+  userCount?: RawSourcedFigure;
+};
 type RawJson = {
   headline?: unknown;
   scores?: RawScore[];
@@ -75,13 +83,30 @@ type RawJson = {
   };
   roadmap?: { mvpTimeline?: unknown; milestones?: RawMilestone[]; quickWins?: unknown[] };
   competitive?: { competitors?: RawCompetitor[]; yourEdge?: unknown };
-  sources?: RawSource[];
 };
 
-type RawSource = { label?: unknown; url?: unknown };
+// A competitor figure is only ever accepted if its claimed URL exactly
+// matches one of this session's real grounding sources — the model self-
+// reports which URL backs a figure (it has to; only it knows which search
+// result supports which specific claim), but the URL itself is verified
+// against real API data, not trusted on its word. The label shown in the
+// UI always comes from the verified Source (real page title), never from
+// anything the model wrote about the figure — same "never fabricate, fall
+// back gracefully" tier as market sizing, not the hard-throw tier
+// scores/sections use: a bad or missing figure just omits that field.
+function resolveSourcedFigure(raw: RawSourcedFigure | undefined, sourceByUrl: Map<string, Source>): SourcedFigure | undefined {
+  if (!raw || typeof raw.value !== "string" || !raw.value.trim()) return undefined;
+  if (typeof raw.url !== "string") return undefined;
 
-export function parseValidationReport(text: string): ValidationReport {
+  const source = sourceByUrl.get(raw.url.trim());
+  if (!source) return undefined;
+
+  return { value: raw.value.trim(), source };
+}
+
+export function parseValidationReport(text: string, groundedSources: Source[]): ValidationReport {
   const parsed = JSON.parse(extractJson(text)) as RawJson;
+  const sourceByUrl = new Map(groundedSources.map((s) => [s.url, s]));
 
   // --- sections (unchanged shape from v1) ---
   if (!Array.isArray(parsed.sections) || parsed.sections.length !== REPORT_SECTION_TITLES.length) {
@@ -161,18 +186,29 @@ export function parseValidationReport(text: string): ValidationReport {
     quickWins,
   };
 
-  // --- competitive landscape: qualitative only, no fabricated stats ---
+  // --- competitive landscape: qualitative fields always fall back gracefully;
+  // funding/valuation/userCount are only attached when resolveSourcedFigure
+  // confirms a real grounded source backs them (see helper above) ---
   const competitors: Competitor[] = (
     Array.isArray(parsed.competitive?.competitors) ? parsed.competitive.competitors : []
   )
     .filter((c): c is RawCompetitor => typeof c?.name === "string" && c.name.trim().length > 0)
     .slice(0, 5)
-    .map((c) => ({
-      name: str(c.name),
-      description: str(c.description, ""),
-      strength: str(c.strength, ""),
-      weakness: str(c.weakness, ""),
-    }));
+    .map((c) => {
+      const funding = resolveSourcedFigure(c.funding, sourceByUrl);
+      const valuation = resolveSourcedFigure(c.valuation, sourceByUrl);
+      const userCount = resolveSourcedFigure(c.userCount, sourceByUrl);
+
+      return {
+        name: str(c.name),
+        description: str(c.description, ""),
+        strength: str(c.strength, ""),
+        weakness: str(c.weakness, ""),
+        ...(funding && { funding }),
+        ...(valuation && { valuation }),
+        ...(userCount && { userCount }),
+      };
+    });
 
   const competitive: CompetitiveLandscape = {
     competitors,
@@ -193,29 +229,6 @@ export function parseValidationReport(text: string): ValidationReport {
       ? parsed.headline.trim()
       : "Validation report generated.";
 
-  // --- sources: the model is instructed not to output this field at all —
-  // app/api/generate/route.ts overwrites it after parsing with sources
-  // built from Gemini's own groundingMetadata (structured API data, not a
-  // model claim). This parses parsed.sources anyway as a defensive
-  // fallback in case that override is ever skipped, same filtering tier as
-  // everything else — never the hard-throw tier.
-  const seenSourceUrls = new Set<string>();
-  const sources: Source[] = (Array.isArray(parsed.sources) ? parsed.sources : [])
-    .filter(
-      (s): s is RawSource =>
-        typeof s?.label === "string" &&
-        s.label.trim().length > 0 &&
-        typeof s?.url === "string" &&
-        HTTP_URL_PATTERN.test(s.url.trim()),
-    )
-    .map((s) => ({ label: str(s.label), url: (s.url as string).trim() }))
-    .filter((s) => {
-      if (seenSourceUrls.has(s.url)) return false;
-      seenSourceUrls.add(s.url);
-      return true;
-    })
-    .slice(0, 8);
-
   return {
     headline,
     scores,
@@ -226,7 +239,7 @@ export function parseValidationReport(text: string): ValidationReport {
     financials,
     roadmap,
     competitive,
-    sources,
+    sources: groundedSources,
     overallScore,
     verdict,
   };

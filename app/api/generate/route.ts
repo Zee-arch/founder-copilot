@@ -185,7 +185,7 @@ export async function POST(request: Request) {
       return Response.json({ error: "The model returned an empty response." }, { status: 500 });
     }
 
-    const report = { ...parseValidationReport(text), sources };
+    const report = parseValidationReport(text, sources);
 
     // Best-effort save for signed-in users — generation already succeeded,
     // so a persistence failure (RLS misconfig, transient DB error, etc.)

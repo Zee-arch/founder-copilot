@@ -78,21 +78,37 @@ export type Roadmap = {
   quickWins: string[]; // 3-5 actions doable within a week
 };
 
+export type Source = {
+  label: string; // what this source supports, e.g. "Global market size"
+  url: string; // must be a real URL the model actually retrieved via web search
+};
+
+// A quantitative competitor claim (funding, valuation, user count) is only
+// ever constructed by lib/parse-report.ts after cross-checking the model's
+// claimed URL against this session's real grounding sources — the type
+// itself has no "figure without a source" shape, so a fabricated number
+// can't reach the UI even if the model tries to report one ungrounded.
+export type SourcedFigure = {
+  value: string; // e.g. "$50M Series B (2025)", "~2M users"
+  source: Source;
+};
+
 export type Competitor = {
   name: string;
   description: string;
   strength: string;
   weakness: string;
+  // Present only when backed by a real source from this session's search —
+  // never inferred from training knowledge. Omitted (not fabricated with a
+  // placeholder) when no grounded figure was found.
+  funding?: SourcedFigure;
+  valuation?: SourcedFigure;
+  userCount?: SourcedFigure;
 };
 
 export type CompetitiveLandscape = {
-  competitors: Competitor[]; // 3-5, qualitative only — no funding/user-count figures
+  competitors: Competitor[]; // 3-5, qualitative required, quantitative fields only when sourced
   yourEdge: string; // the differentiation opportunity, one short paragraph
-};
-
-export type Source = {
-  label: string; // what this source supports, e.g. "Global market size"
-  url: string; // must be a real URL the model actually retrieved via web search
 };
 
 export type ValidationReport = {
