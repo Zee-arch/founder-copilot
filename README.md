@@ -8,21 +8,22 @@
 
 ## What it does
 
-Type a startup idea in one sentence. FounderCopilot scores it across 8 independent factors with an LLM, then generates a 5-part report:
+Type a startup idea in one sentence. FounderCopilot scores it across 8 independent factors with an LLM, then generates a 6-part report:
 
 | Step | What's in it |
 |---|---|
 | **Summary** | Overall score + verdict, radar chart of the 8 factors, TAM/SAM/SOM, go/stop signals |
 | **Financials** | Startup cost, break-even estimate, CAC/LTV, LTV:CAC ratio, revenue streams |
 | **Roadmap** | MVP timeline, phased milestones (Validate → Build → Launch → Distribute), quick wins |
-| **Competitors** | Named competitors with qualitative strengths/weaknesses |
+| **Competitors** | Named competitors with qualitative strengths/weaknesses, plus sourced funding/valuation/user-count figures when a real citation backs them |
+| **Validate** | A customer interview guide, cold outreach email drafts, and pre-sell landing copy — starting drafts for validating with real people, not just AI |
 | **Full Report** | 10-section prose write-up (market, ICP, SWOT, GTM, risks, and more) |
 
 Each step has its own URL, the whole report exports to a PDF, and there's no login or account required.
 
 ## A design principle that shaped the engineering
 
-The overall score isn't a black box: it's **computed in application code from the 8 individual factor scores**, never trusted directly from the model. Market sizing, financials, and competitor figures are always labeled as estimates rather than dressed up to look like verified data — and competitor profiles are deliberately qualitative-only (no funding/valuation/user-count figures), since a language model can't verify numbers like that are current. That constraint shaped several implementation decisions below.
+The overall score isn't a black box: it's **computed in application code from the 8 individual factor scores**, never trusted directly from the model. Market sizing and financials are always labeled as estimates rather than dressed up to look like verified data. Competitor profiles are qualitative by default — a funding, valuation, or user-count figure only ever appears when it's cross-checked in code against a real source the model actually retrieved via web search that session; an unsourced or invented figure is structurally impossible to render, not just discouraged by a prompt. That constraint shaped several implementation decisions below.
 
 ## Notable engineering decisions
 

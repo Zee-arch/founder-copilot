@@ -23,6 +23,7 @@ Rules:
 - For "competitive.competitors": name real, well-known companies where plausible. "description", "strength", and "weakness" are always required and stay qualitative. You may ALSO add "funding", "valuation", and/or "userCount" for a competitor, but ONLY when you actually found that exact figure via web search in this session — never from memory, never estimated, even if you're confident it's roughly right. Each of those, if included, must be an object with "value" (the figure, e.g. "$50M Series B (2025)") and "url" (the exact real URL of the page you found it on, from this session's search — not reconstructed from memory). If you did not search and find a real, current figure for a competitor, omit that field entirely — do not guess, round, or reuse an old number. 3-5 competitors.
 - "roadmap.milestones": 4-6 items, roughly chronological, each "phase" must be exactly one of: ${MILESTONE_PHASES.join(", ")}. Timeframes are relative ("Month 2-3"), never specific calendar dates.
 - "financials.revenueStreams": 2-4 items. "roadmap.quickWins": 3-5 items, each genuinely doable within a week.
+- "customerValidation" exists because a score alone isn't the finish line — real customer conversations are. "interviewQuestions": 5-8 open-ended, non-leading questions about the founder's PROBLEM space (how do they currently handle this, what have they tried, what's frustrating about it) — never a leading or yes/no question that fishes for validation (not "Would you pay $X for this?", not "Do you agree this is a problem?"). "outreachEmails": 2-3 short (under 100 words each) cold emails to plausible early customers or design partners, asking for a conversation, not a sale — genuine subject lines, no hype. "landingPageCopy": one paragraph of pre-sell landing-page copy aimed at gauging real signup interest. ALL THREE must contain zero fabricated statistics, zero invented testimonials or quotes, and zero specific claims like "X% of users" or "join thousands of..." — these are drafts to go get real data with, not a place to invent fake data. If you cannot write a genuinely specific, non-generic version of one of these three for this idea, write a shorter, more honest one rather than padding it with invented specifics.
 - Do NOT include a "sources" field yourself — sources are captured automatically from search grounding metadata, not from anything you write. Leave it out of your JSON entirely.
 - Do NOT calculate or include an overall score or verdict yourself — that is computed separately from your 8 factor scores. Just score the 8 factors honestly and independently of each other.
 - Return ONLY valid JSON. No markdown fences, no preamble, no trailing text.
@@ -95,6 +96,15 @@ The JSON must match this shape exactly:
       }
     ],
     "yourEdge": "One short paragraph on the realistic differentiation opportunity given this competitive set."
+  },
+  "customerValidation": {
+    "interviewQuestions": [
+      "5-8 open-ended, non-leading questions about the founder's problem space — no yes/no questions, nothing that fishes for validation"
+    ],
+    "outreachEmails": [
+      { "subject": "Short, genuine subject line", "body": "Under 100 words, asks for a conversation, not a sale. No hype, no fabricated stats." }
+    ],
+    "landingPageCopy": "One paragraph of pre-sell copy to gauge real signup interest — no invented testimonials, no fabricated numbers."
   }
 }
 

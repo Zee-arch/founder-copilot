@@ -426,6 +426,78 @@ resets, this is worth testing with at least two very different ideas
 see whether the reports actually read differently, not just whether
 `category` comes back populated.
 
+**2026-07-22 (same day): added a 6th report step, "Validate" — a
+customer-validation starting kit.** Grounded in a real, consistent market
+critique the founder raised: AI validation alone isn't the finish line,
+and tools that stop at a score get criticized as incomplete. The fix
+isn't a bigger score — it's giving the founder a concrete first step
+toward talking to real people, generated in the same single call as
+everything else.
+
+Followed the existing `REPORT_STEPS` pattern exactly, per the founder's
+own instruction to read it first: `lib/report-icons.tsx`'s `REPORT_STEPS`
+array is the single source of truth for the step nav, the off-screen PDF
+render loop, and `LandingPage.tsx`'s "What you get" strip — all three are
+already written as generic `.map()`/`.length` loops over that array (not
+hardcoded to 5), so adding one entry (`key: "validate"`) was enough to
+extend all three automatically. The only places that needed a manual
+touch were `components/report/StepContent.tsx`'s switch (added a
+`"validate"` case) and `LandingPage.tsx`'s `WHAT_YOU_GET` record (TypeScript
+caught this immediately — it's typed against `REPORT_STEPS`' keys, so a
+missing entry is a compile error, not a silent gap).
+
+New `CustomerValidation` type (`lib/types.ts`): `interviewQuestions:
+string[]` (5-8, open-ended), `outreachEmails: OutreachEmail[]` (2-3,
+`{subject, body}`), `landingPageCopy: string` (one paragraph). Added to
+`ValidationReport` as `customerValidation`. `lib/prompt.ts` instructs the
+model to write these for the SAME idea in the SAME generation call — no
+second API request — with an explicit, repeated constraint: zero
+fabricated statistics, zero invented testimonials or "X% of users"
+claims, since these are supposed to be starting points for *getting* real
+data, not a place to invent it. `lib/parse-report.ts` parses it at the
+same graceful, non-throwing tier as financials/roadmap — missing or
+malformed just yields fewer items, never breaks generation.
+
+**Worth being precise about the honesty guarantee here, since it differs
+from this session's other work today.** Unlike sourced competitor figures
+(structurally enforced — a fabricated figure literally cannot have a
+`Source` attached), the "no fabricated stats" rule for interview
+questions/emails/landing copy is prompt-level trust only, same tier as
+market sizing. There's no structural anchor to check a claim inside free
+email/landing prose against, the way a competitor's funding figure has a
+URL to cross-check. Said plainly in the new step's own UI copy
+(`components/report/CustomerValidation.tsx`), not just buried in
+`HANDOFF.md` — a visible banner at the top of the step frames these as
+starting drafts to customize, and a footer line makes the "no invented
+numbers" expectation explicit to whoever's about to copy-paste these
+into a real email.
+
+Also fixed two now-stale "5-part report" mentions this change would have
+otherwise left behind: `app/how-it-works/page.tsx` now derives the count
+from `REPORT_STEPS.length` instead of a hardcoded number (so it can't go
+stale again next time a step is added), and `README.md`'s feature table
+got a new row plus a correction to its now-outdated "qualitative-only, no
+funding/valuation/user-count figures" competitor claim (superseded by
+today's sourced-figures change, missed when that shipped since it wasn't
+touched at the time).
+
+**Not yet live-verified — the same persistent quota block, now confirmed
+across attempts spread over hours in this same extended session, well
+past what a transient spike would explain.** Typechecked and linted
+clean (`npx eslint app components lib` — the only lint noise is
+pre-existing `.next/` build output, unrelated to any of today's source
+changes). Confirmed the request path handles the now-larger prompt
+(category classification + regulation rule + full customer-validation
+spec, on top of everything already there) and fails cleanly on the same
+`429`. **Completely unseen**: any real interview questions, email drafts,
+or landing copy: whether they're genuinely non-leading and non-generic,
+whether the "no fabricated stats" instruction actually holds under real
+generation, and whether the new step renders correctly end-to-end
+(including in the PDF export, which was never tested with 6 steps).
+Founder: this is the third and most novel of today's three unverified
+features stacked on PR #6 — worth being the first one you check once
+quota resets, precisely because it's new UI, not modified UI.
+
 ## Architecture
 
 - Next.js 15 (App Router), TypeScript, Tailwind v4 (CSS-first config in
@@ -471,6 +543,13 @@ see whether the reports actually read differently, not just whether
 - `components/report/Financials.tsx`, `Roadmap.tsx`, `CompetitiveLandscape.tsx`
   — the three new Phase 2 sections, same dark "instrument panel" styling as
   Snapshot (data/card-driven, as opposed to FullReport's light prose style).
+- `components/report/CustomerValidation.tsx` (2026-07-22) — the 6th report
+  step (`REPORT_STEPS` key `"validate"`), same dark instrument-panel style
+  as the above three. Renders `report.customerValidation` (interview
+  questions, outreach email drafts, landing-page copy) with a prominent
+  "starting draft, not a finished asset" banner up top, not just a small
+  footer disclaimer like the other sections — deliberate, since this is
+  content people might actually copy-paste and send.
 - `components/report/FullReport.tsx` — the 10 prose sections, light
   background (deliberately different from Snapshot's dark panel — long
   prose is more readable on light, short data readouts work on dark). Has

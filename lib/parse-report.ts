@@ -5,11 +5,13 @@ import {
   SCORE_CRITERIA,
   type Competitor,
   type CompetitiveLandscape,
+  type CustomerValidation,
   type Financials,
   type IdeaCategory,
   type MarketSizing,
   type Milestone,
   type MilestonePhase,
+  type OutreachEmail,
   type Roadmap,
   type RevenueStream,
   type ScoreCriterion,
@@ -58,6 +60,7 @@ function str(value: unknown, fallback = "Not estimated"): string {
 type RawScore = { label?: unknown; score?: unknown; note?: unknown };
 type RawRevenueStream = { name?: unknown; description?: unknown };
 type RawMilestone = { title?: unknown; phase?: unknown; timeframe?: unknown };
+type RawOutreachEmail = { subject?: unknown; body?: unknown };
 type RawSourcedFigure = { value?: unknown; url?: unknown };
 type RawCompetitor = {
   name?: unknown;
@@ -86,6 +89,11 @@ type RawJson = {
   };
   roadmap?: { mvpTimeline?: unknown; milestones?: RawMilestone[]; quickWins?: unknown[] };
   competitive?: { competitors?: RawCompetitor[]; yourEdge?: unknown };
+  customerValidation?: {
+    interviewQuestions?: unknown[];
+    outreachEmails?: RawOutreachEmail[];
+    landingPageCopy?: unknown;
+  };
 };
 
 // A competitor figure is only ever accepted if its claimed URL exactly
@@ -232,6 +240,33 @@ export function parseValidationReport(text: string, groundedSources: Source[]): 
       ? parsed.headline.trim()
       : "Validation report generated.";
 
+  // --- customer validation: same graceful, never-fabricate tier as
+  // financials/roadmap — the honesty constraint here (no invented stats or
+  // testimonials) is enforced in the prompt, not structurally checkable in
+  // code the way sourced competitor figures are, since there's no URL to
+  // cross-check a claim inside free-form email/landing copy against.
+  const interviewQuestions = (
+    Array.isArray(parsed.customerValidation?.interviewQuestions) ? parsed.customerValidation.interviewQuestions : []
+  )
+    .filter((q): q is string => typeof q === "string" && q.trim().length > 0)
+    .slice(0, 8);
+
+  const outreachEmails: OutreachEmail[] = (
+    Array.isArray(parsed.customerValidation?.outreachEmails) ? parsed.customerValidation.outreachEmails : []
+  )
+    .filter(
+      (e): e is RawOutreachEmail =>
+        typeof e?.subject === "string" && e.subject.trim().length > 0 && typeof e?.body === "string" && e.body.trim().length > 0,
+    )
+    .slice(0, 3)
+    .map((e) => ({ subject: str(e.subject), body: str(e.body) }));
+
+  const customerValidation: CustomerValidation = {
+    interviewQuestions,
+    outreachEmails,
+    landingPageCopy: str(parsed.customerValidation?.landingPageCopy, "Not enough information to draft pre-sell copy."),
+  };
+
   // --- category: informational, steers the model's own emphasis (see
   // lib/prompt.ts) — never trusted to gate or restructure anything in code,
   // so an invalid/missing value just falls back to the no-special-emphasis
@@ -252,6 +287,7 @@ export function parseValidationReport(text: string, groundedSources: Source[]): 
     financials,
     roadmap,
     competitive,
+    customerValidation,
     sources: groundedSources,
     overallScore,
     verdict,

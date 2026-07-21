@@ -46,6 +46,7 @@ const WHAT_YOU_GET: Record<(typeof REPORT_STEPS)[number]["key"], string> = {
   financials: "Startup cost, break-even, CAC/LTV, revenue streams",
   roadmap: "MVP timeline, milestones, quick wins",
   competitors: "Named competitors and your edge over them",
+  validate: "Interview questions, outreach drafts, and pre-sell copy",
   full: "The complete prose report, exportable as a PDF",
 };
 
@@ -86,7 +87,7 @@ function ReportPreviewCard() {
 
 function WhatYouGetStrip() {
   return (
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
       {REPORT_STEPS.map((step) => {
         const Icon = step.icon;
         return (

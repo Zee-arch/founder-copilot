@@ -129,6 +129,22 @@ export type CompetitiveLandscape = {
   yourEdge: string; // the differentiation opportunity, one short paragraph
 };
 
+export type OutreachEmail = {
+  subject: string;
+  body: string;
+};
+
+// Starting drafts for validating the idea with real people, not just AI —
+// deliberately never asked to include fabricated social proof or stats
+// (no invented "X% of users said..."). Same "never fabricate, fall back
+// gracefully" tier as financials/roadmap/competitive, not the hard-throw
+// tier scores/sections use.
+export type CustomerValidation = {
+  interviewQuestions: string[]; // 5-8, open-ended, non-leading
+  outreachEmails: OutreachEmail[]; // 2-3 short cold drafts
+  landingPageCopy: string; // one paragraph of pre-sell copy
+};
+
 export type ValidationReport = {
   headline: string; // one-line qualitative judgment on the idea
   category: IdeaCategory; // classified by the model, steers emphasis only — see lib/prompt.ts
@@ -140,6 +156,7 @@ export type ValidationReport = {
   financials: Financials;
   roadmap: Roadmap;
   competitive: CompetitiveLandscape;
+  customerValidation: CustomerValidation;
   sources: Source[]; // real pages retrieved via Gemini's Google Search grounding (see route.ts)
   // Computed in code from `scores` — never trusted from the model directly,
   // so the number on screen always matches the math behind it.

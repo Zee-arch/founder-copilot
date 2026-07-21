@@ -22,8 +22,8 @@ const PROCESS_STEPS = [
   },
   {
     icon: ArrowRight,
-    title: "Read your 5-part report",
-    body: "Summary, financials, roadmap, competitors, and the full prose report — each with its own page, plus a PDF you can save or share.",
+    title: `Read your ${REPORT_STEPS.length}-part report`,
+    body: "Summary, financials, roadmap, competitors, a customer-validation starting kit, and the full prose report — each with its own page, plus a PDF you can save or share.",
   },
 ];
 
