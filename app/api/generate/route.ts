@@ -8,10 +8,13 @@ const MAX_IDEA_LENGTH = 500;
 
 // No web search in this generation path (see HANDOFF.md), but Gemini's free
 // tier is currently overloaded often enough that a single call can itself
-// take 60-80s before failing with 503 (measured live, not hypothetical) —
-// so this needs real headroom for the retry below, not the bare minimum a
-// single fast call would suggest.
-export const maxDuration = 150;
+// take 60-80s before failing with 503 (measured live, not hypothetical).
+// 150 was tried first and genuinely too low — a real production request
+// (one retry included) got killed by Vercel mid-flight, returning a plain
+// non-JSON error page instead of ours. 280 was already proven safe on this
+// project's Vercel plan for the old Claude+search path, so reuse that
+// known-good ceiling rather than guess a new number a second time.
+export const maxDuration = 280;
 
 // Gemini's free tier genuinely returns 503 "high demand" fairly often right
 // now — confirmed live while testing this integration. The API's own error
