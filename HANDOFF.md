@@ -128,15 +128,60 @@ right report) needs a real login, which requires a password Claude
 doesn't have and won't ask for. **Founder: please click through this once**
 before treating Stage 2 as done — see "Immediate next steps" below.
 
+**2026-07-21 (later still):** Swapped the generation API from Claude to
+**Google Gemini** (`gemini-3.5-flash`), and **turned off web search
+grounding entirely** — both the founder's explicit choice, purely to stop
+burning paid API credits while iterating on features. Not a quality
+decision: once the product is feature-complete, the founder wants to
+re-compare providers (including Claude) for actual output quality before
+picking one for real. `app/api/generate/route.ts` now uses the
+`@google/genai` SDK (`GoogleGenAI.models.generateContent`) with
+`responseMimeType: "application/json"` instead of the Anthropic SDK's
+`messages.create` + a `web_search` tool + pause-turn continuation loop —
+all of that Claude/search-specific machinery is gone from the route, not
+just swapped. `lib/parse-report.ts` and `lib/types.ts` didn't need
+structural changes — the JSON contract they validate is provider-agnostic
+by design, only a couple of stale "Claude"-specific comments/error
+messages were reworded. `lib/prompt.ts`'s web-search rules were replaced
+with a plain "you don't have web access, use labeled estimates" rule, and
+the model is now told to always return `"sources": []`.
+
+Because grounding is off, `sources` will be an empty array on every report
+until it's turned back on for some provider — this is expected, not a
+regression. `components/LandingPage.tsx`'s trust badges and multi-step
+loading copy previously said "Grounded with live web search" and "Powered
+by Claude"; both were now **false claims** the moment the swap happened,
+so they were changed to "Powered by AI" / "8-factor scoring" and the
+loading steps were shortened (no more ~130s "searching" phase) —
+otherwise the UI would have been actively lying about what it does, which
+directly violates this project's own "stay strict on data honesty" rule.
+`maxDuration` on the route dropped from 280s to 60s since there's no
+multi-minute search loop to wait out anymore.
+
+**Not run end-to-end** — no `GEMINI_API_KEY` exists yet anywhere (checked
+`.env.local`: only the old `ANTHROPIC_API_KEY` and Supabase keys are
+there). Typechecked clean, and the request path was verified live up to
+the point of calling Gemini — submitting the form correctly surfaced
+"Gemini API key is missing. Add GEMINI_API_KEY to your .env.local file and
+restart the server." with no crash, confirming the wiring is right. **The
+founder needs to get a free key from
+[aistudio.google.com/apikey](https://aistudio.google.com/apikey), add
+`GEMINI_API_KEY=...` to `.env.local`, and run one real generation** before
+this is considered actually working — model output quality/JSON
+reliability for `gemini-3.5-flash` on this exact prompt is completely
+unverified.
+
 ## Architecture
 
 - Next.js 15 (App Router), TypeScript, Tailwind v4 (CSS-first config in
   `app/globals.css` via `@theme`, not a `tailwind.config.js`)
-- One API route: `app/api/generate/route.ts` — calls Claude, rate-limits by
-  IP, validates input length, returns the parsed report
+- One API route: `app/api/generate/route.ts` — calls the model (currently
+  Gemini, see status log), rate-limits by IP, validates input length,
+  returns the parsed report
 - `lib/prompt.ts` — the system prompt, requests a specific JSON shape
-- `lib/parse-report.ts` — defensively parses and validates Claude's JSON.
-  **Important**: it computes `overallScore` and `verdict` itself from the 8
+- `lib/parse-report.ts` — defensively parses and validates the model's
+  JSON, provider-agnostic by design. **Important**: it computes
+  `overallScore` and `verdict` itself from the 8
   factor scores — it does NOT trust a score/verdict from the model directly.
   Don't change this without a good reason; it's what makes the score
   defensible ("the math is checkable") rather than a black box. The
@@ -193,24 +238,18 @@ before treating Stage 2 as done — see "Immediate next steps" below.
   longer than a couple of animation frames), so html2canvas sometimes
   captured stale/mid-transition DOM and threw. Rendering everything
   off-screen up front sidesteps the race entirely.
-- **`app/api/generate/route.ts` uses `web_search_20260318` with
-  `allowed_callers: ["direct"]`, not the tool's default.** The default for
-  this tool version routes every search through dynamic filtering (code
-  execution under the hood) — measured over **8 minutes** for a single
-  report with the default before switching. `["direct"]` skips that and
-  brought it to ~2-3 minutes. We don't need dynamic filtering's
-  context-trimming benefit since the final output is compact structured
-  JSON, not long prose quoting search results. `max_uses: 4`,
-  `export const maxDuration = 280` on the route (Vercel would otherwise
-  kill the function before a search-heavy generation finishes — verified
-  live on the actual Vercel deployment, not just locally, since dev mode
-  doesn't enforce that timeout at all).
-- **Text-block concatenation in the API route is load-bearing, not
-  defensive.** Web search's citation mechanism can split Claude's single
-  JSON response across multiple sequential `text` content blocks (confirmed
-  against Anthropic's live docs). The route concatenates every `text` block
-  in `response.content`, not just the first — taking only the first would
-  silently truncate the JSON on some requests.
+- **Historical, currently inactive (as of 2026-07-21):** the route used to
+  call Claude with a `web_search_20260318` tool (`allowed_callers:
+  ["direct"]` to skip a slow dynamic-filtering path — 8 minutes vs. ~2-3
+  for a single report), `max_uses: 4`, `maxDuration = 280`, and
+  concatenated every `text` content block in the response (web search's
+  citation mechanism could split the JSON output across several blocks —
+  keeping only the first silently truncated it on some requests). All of
+  this was removed, not just disabled, when the route switched to Gemini
+  with search off — see the 2026-07-21 status log entry for why and what
+  it was replaced with. Kept here so re-adding search grounding later
+  (to Claude, Gemini, or otherwise) doesn't require rediscovering these
+  gotchas from scratch.
 
 ## Accounts (Supabase) — Stage 1 & 2
 
@@ -289,8 +328,13 @@ before treating Stage 2 as done — see "Immediate next steps" below.
 
 ## Decisions worth knowing before you change them
 
-- **Model**: `claude-sonnet-4-6` (current stable Sonnet as of July 2026 —
-  verify this is still current before assuming it, models change).
+- **Model**: `gemini-3.5-flash` via `@google/genai`, as of 2026-07-21 — a
+  deliberate, temporary, cost-driven swap off Claude while iterating on
+  features (see status log). Web search grounding is off. Verify the model
+  name is still current/free-tier before assuming it (check
+  ai.google.dev/gemini-api/docs/pricing), and don't assume this is the
+  final provider choice — the founder wants to re-compare Claude/Gemini/
+  others on actual output quality once the product is feature-complete.
 - **Rate limiting** (`lib/rate-limit.ts`): in-memory, per-IP, 8 req/hour.
   Deliberately basic — fine for friends testing, NOT durable on serverless
   (resets on cold start) or across multiple instances. If this gets real
@@ -310,11 +354,12 @@ before treating Stage 2 as done — see "Immediate next steps" below.
   same API that added support for it. Don't swap back to `html2canvas`
   without re-testing PDF export.
 - **Market sizing (TAM/SAM/SOM), financials, and roadmap figures** are
-  Claude's own labeled estimates, not verified data. The prompt explicitly
+  the model's own labeled estimates, not verified data (more so than ever
+  now that web search is off — see status log). The prompt explicitly
   forbids fabricating false-precision numbers. Keep the "(estimate)"
   framing in the UI — don't let it drift into looking like sourced data.
 - **Competitor profiles are qualitative only** — name, one-line description,
-  one strength, one weakness. The prompt explicitly tells Claude not to
+  one strength, one weakness. The prompt explicitly tells the model not to
   include funding amounts, valuations, or user counts for competitors,
   since those can't be verified here and go stale immediately. Don't add
   those fields back without re-opening the "stay strict" conversation.
@@ -322,9 +367,9 @@ before treating Stage 2 as done — see "Immediate next steps" below.
   been deliberately superseded, don't assume the old README/spec wording
   is still current.** See "Accounts (Supabase)" above. Generation itself
   is still unauthenticated and un-gated on purpose — signing in is
-  additive (will unlock saved report history once Stage 2 ships), not a
-  requirement. `lib/report-context.tsx`'s `sessionStorage` behavior is
-  unchanged; nothing writes to the database yet.
+  additive, not a requirement. `lib/report-context.tsx`'s `sessionStorage`
+  behavior is unchanged. As of Stage 2 (2026-07-21), signed-in generation
+  does write to the `reports` table — see "Accounts (Supabase)" above.
 
 ## What's untested
 
@@ -353,6 +398,13 @@ log in → generate a report → confirm a row appears in Supabase's `reports`
 table (Table Editor) → visit `/dashboard` → confirm it's listed → click it
 → confirm it opens the same report at `/report/summary`.
 
+As of 2026-07-21 (Gemini swap): **completely unrun.** No `GEMINI_API_KEY`
+exists in `.env.local` yet. Typechecked and the "key missing" error path
+was confirmed live, but zero real Gemini output has been seen — not the
+JSON reliability, not whether `gemini-3.5-flash` reliably follows the
+10-section/8-score/exact-shape prompt, nothing. Treat report quality as
+completely unknown until a real key is added and a real generation runs.
+
 ## Competitive benchmark
 
 The founder is comparing this against **ideaproof.io**, a competing idea
@@ -369,27 +421,38 @@ it's wanted.
 
 ## Immediate next steps (discussed, not yet done)
 
-1. **Founder: verify Stage 2 signed-in path for real** (see "What's
+1. **Founder: get a free `GEMINI_API_KEY` and run one real generation.**
+   Nothing about the Gemini swap has been verified beyond "it typechecks
+   and fails cleanly without a key" — see "What's untested" above. Get a
+   key at aistudio.google.com/apikey, add it to `.env.local`, run
+   `npm run dev`, and try a real idea. Also add the same key to Vercel's
+   env vars before deploying this branch, or production will break.
+2. **Founder: verify Stage 2 signed-in path for real** (see "What's
    untested" above) — code is written and typechecked but the actual
    generate → persist → dashboard → reopen loop has not run with a real
    session.
-2. The four utility ideas discussed but not started: standalone
+3. The four utility ideas discussed but not started: standalone
    calculators (LTV/CAC/break-even/runway), a "recalculate with your
    numbers" override on financials, an interactive milestone checklist on
    Roadmap, and a risk-matrix visualization for the stop signals. Now that
    `/dashboard` exists, these can be built dashboard-native as originally
    planned.
-3. Possibly upgrade PDF export to real selectable text.
-4. Harden rate limiting before any wider traffic — generation now takes
-   ~2-3 minutes (search-heavy, up from ~90s), worth re-checking the
-   8 req/hour window still makes sense. The in-memory rate limiter
-   (`lib/rate-limit.ts`) resets on every Vercel serverless cold start —
-   live, not hypothetical, now that this is actually deployed.
-5. Mobile-width visual check for the report journey + marketing pages —
+4. Possibly upgrade PDF export to real selectable text.
+5. Harden rate limiting before any wider traffic. Generation should be
+   faster now with search off (unverified — see above); re-check whether
+   8 req/hour still makes sense once real timing is known. The in-memory
+   rate limiter (`lib/rate-limit.ts`) resets on every Vercel serverless
+   cold start — live, not hypothetical, now that this is actually deployed.
+6. Mobile-width visual check for the report journey + marketing pages —
    not yet done by an AI or the founder.
-6. Fill in the real name on the MIT `LICENSE` file if it ever needs to
+7. Fill in the real name on the MIT `LICENSE` file if it ever needs to
    change (currently "Zaeem Ather").
-7. **Strategic pivot (2026-07-18):** the founder wants to step back from
+8. **Once the product is feature-complete, re-compare LLM providers**
+   (Claude vs. Gemini vs. others) on actual output quality for this exact
+   prompt/JSON contract, and decide for real — the Gemini swap was a
+   cost-saving move during development, not a quality judgment. Revisit
+   whether web search grounding comes back too.
+9. **Strategic pivot (2026-07-18):** the founder wants to step back from
    feature-by-feature execution and think about product direction more
    holistically before continuing — where the product needs to reach,
    working backward from there, and how to use AI more deeply in the

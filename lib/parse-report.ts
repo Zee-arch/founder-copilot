@@ -30,7 +30,7 @@ function extractJson(text: string) {
   const end = trimmed.lastIndexOf("}");
 
   if (start === -1 || end === -1 || end <= start) {
-    throw new Error("Claude did not return valid JSON.");
+    throw new Error("The model did not return valid JSON.");
   }
 
   return trimmed.slice(start, end + 1);
@@ -49,7 +49,7 @@ function scoresToVerdict(overallScore: number): Verdict {
 }
 
 // Shared fallback for any labeled-estimate string field (market sizing,
-// financials, roadmap) — never fabricate a value Claude didn't provide.
+// financials, roadmap) — never fabricate a value the model didn't provide.
 function str(value: unknown, fallback = "Not estimated"): string {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
@@ -85,7 +85,7 @@ export function parseValidationReport(text: string): ValidationReport {
 
   // --- sections (unchanged shape from v1) ---
   if (!Array.isArray(parsed.sections) || parsed.sections.length !== REPORT_SECTION_TITLES.length) {
-    throw new Error("Claude returned an incomplete report (missing report sections).");
+    throw new Error("The model returned an incomplete report (missing report sections).");
   }
 
   const sections = REPORT_SECTION_TITLES.map((title, index) => {
@@ -193,10 +193,10 @@ export function parseValidationReport(text: string): ValidationReport {
       ? parsed.headline.trim()
       : "Validation report generated.";
 
-  // --- sources: only real-looking URLs Claude claims to have retrieved via
-  // web_search — this can't be cryptographically verified, so it's held to
-  // the same "trust the instruction, filter defensively" tier as everything
-  // else, never the hard-throw tier.
+  // --- sources: no web search in the current generation path (see
+  // HANDOFF.md), so the model is instructed to always return an empty
+  // array. Still filtered defensively rather than trusted, same as
+  // everything else — never the hard-throw tier — in case that changes.
   const seenSourceUrls = new Set<string>();
   const sources: Source[] = (Array.isArray(parsed.sources) ? parsed.sources : [])
     .filter(
