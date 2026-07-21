@@ -1,0 +1,81 @@
+"use client";
+
+import { useRouter } from "next/navigation";
+import { ArrowRight } from "lucide-react";
+import type { ValidationReport } from "@/lib/types";
+import { VERDICT_ICONS } from "@/lib/report-icons";
+import { useReport } from "@/lib/report-context";
+
+type Tone = "go" | "refine" | "pivot";
+
+const VERDICT_TONE: Record<ValidationReport["verdict"], Tone> = {
+  GO: "go",
+  REFINE: "refine",
+  PIVOT: "pivot",
+};
+
+const TONE_COLOR: Record<Tone, string> = {
+  go: "var(--color-signal-go)",
+  refine: "var(--color-signal-refine)",
+  pivot: "var(--color-signal-pivot)",
+};
+
+const TONE_DIM: Record<Tone, string> = {
+  go: "var(--color-signal-go-dim)",
+  refine: "var(--color-signal-refine-dim)",
+  pivot: "var(--color-signal-pivot-dim)",
+};
+
+export function ReportCard({
+  idea,
+  report,
+  createdAt,
+}: {
+  idea: string;
+  report: ValidationReport;
+  createdAt: string;
+}) {
+  const router = useRouter();
+  const { setReportData } = useReport();
+  const tone = VERDICT_TONE[report.verdict];
+  const VerdictIcon = VERDICT_ICONS[report.verdict];
+
+  function handleOpen() {
+    setReportData(idea, report);
+    router.push("/report/summary");
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleOpen}
+      className="group flex w-full items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:border-brand/40 hover:shadow-md"
+    >
+      <div className="min-w-0 flex-1">
+        <p className="truncate font-display text-base text-slate-text">{idea}</p>
+        <p className="mt-1 text-xs text-slate-400">
+          {new Date(createdAt).toLocaleDateString(undefined, {
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+          })}
+        </p>
+      </div>
+
+      <div className="flex shrink-0 items-center gap-4">
+        <div className="text-right">
+          <span className="font-display text-lg text-slate-text">{report.overallScore}</span>
+          <span className="text-xs text-slate-400"> / 100</span>
+        </div>
+        <span
+          className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 font-mono text-xs font-semibold tracking-[0.15em]"
+          style={{ color: TONE_COLOR[tone], backgroundColor: TONE_DIM[tone] }}
+        >
+          <VerdictIcon className="h-3.5 w-3.5" />
+          {report.verdict}
+        </span>
+        <ArrowRight className="h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-brand" />
+      </div>
+    </button>
+  );
+}

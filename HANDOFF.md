@@ -61,15 +61,154 @@ of the returned URLs and confirming the page titles match the claimed
 labels. See "Decisions worth knowing" for the `allowed_callers: ["direct"]`
 latency fix that came out of this.
 
+**2026-07-18**: Phase 4 — redesigned the landing page hero into two
+columns: the input form, plus a `ReportPreviewCard` reusing the real
+`VerdictGauge` component (exported from `Snapshot.tsx`) seeded with fixed
+sample data and clearly tagged "Example report" — an honest product
+screenshot, not an invented mockup. Added a "What you get" feature strip
+(reuses `REPORT_STEPS`), a CSS-only entrance animation, and the site's
+first `Footer`. `components/Footer.tsx` is new; not yet added to
+`how-it-works`/`about`.
+
+**2026-07-18**: Stage 1 of real accounts — the founder decided to move
+past the "no login" v1 spec and add sign-up/login. Chose **Supabase**
+(Google OAuth + email/password) over Clerk and NextAuth+Vercel Postgres.
+Scoped deliberately: **this pass only ships the auth foundation**, not
+persistence — `app/api/generate/route.ts` and `lib/report-context.tsx`
+are untouched, so generating a report while signed out still works exactly
+as before (the "No login required" badge stays true). See the new
+"Accounts (Supabase)" architecture section and "Decisions worth knowing"
+below for what shipped and the production gotchas found along the way.
+Both this and the Phase 4 landing redesign are merged to `main` and live
+on Vercel.
+
+**2026-07-21:** Diagnosed the "Invalid login credentials" issue from
+2026-07-18 by querying `auth.users`/`auth.identities` directly on the live
+Supabase project. **Not a bug** — the founder's main email
+(`zaeemather7@gmail.com`) was originally signed up via Google OAuth only,
+so it has no password credential; `signInWithPassword` against it will
+correctly fail every time. A different test account
+(`zaeemather7+foundercopilot@gmail.com`) does have a password identity and
+logs in fine. No code change made. Worth knowing for the future: if a
+"can't log in" report comes in again, check which provider(s) an account
+actually has before assuming the auth code is broken.
+
+**2026-07-21:** Stage 2 — reports now actually persist and are browsable.
+`app/api/generate/route.ts` checks `supabase.auth.getUser()` after a
+successful generation and, if signed in, inserts `{ user_id, idea, report }`
+into the `reports` table (RLS already restricted this to the owning user
+since Stage 1). This is deliberately **best-effort**: the insert is wrapped
+in its own try/catch and only `console.error`s on failure — a DB hiccup
+must never turn a successful generation into a failed response. Anonymous
+generation is untouched (`getUser()` returns null, insert is skipped
+entirely).
+
+New `/dashboard` (`app/dashboard/page.tsx`, server component) redirects
+signed-out visitors to `/login?next=/dashboard`, otherwise lists the
+signed-in user's saved reports (idea, date, score, verdict badge) via
+`components/dashboard/ReportCard.tsx`. Clicking a card doesn't fetch
+anything new — it calls the existing `useReport().setReportData()` and
+routes to `/report/summary`, reusing the exact same `sessionStorage`-backed
+context and step UI that a fresh generation uses. No new report-viewing
+code path was built.
+
+Added `next` redirect support end-to-end so a signed-out visit to a
+protected route (right now just `/dashboard`) returns there after auth:
+`AuthForm` takes an optional `next` prop threaded through to both the
+password-login redirect and Google's `redirectTo`; `/login` and `/sign-up`
+read `?next=` from `searchParams` and pass it down; `/auth/callback`
+already supported `next` from Stage 1 and needed no changes.
+`SiteHeader`'s signed-in state now also shows a "Dashboard" link.
+
+**Not yet verified in a real browser session** — this pass was typechecked
+and the signed-out redirect (`/dashboard` → `/login?next=/dashboard`) was
+confirmed live, but the actual signed-in path (generate while logged in →
+row appears in `reports` → shows on `/dashboard` → clicking it opens the
+right report) needs a real login, which requires a password Claude
+doesn't have and won't ask for. **Founder: please click through this once**
+before treating Stage 2 as done — see "Immediate next steps" below.
+
+**2026-07-21 (later still):** Swapped the generation API from Claude to
+**Google Gemini** (`gemini-3.5-flash`), and **turned off web search
+grounding entirely** — both the founder's explicit choice, purely to stop
+burning paid API credits while iterating on features. Not a quality
+decision: once the product is feature-complete, the founder wants to
+re-compare providers (including Claude) for actual output quality before
+picking one for real. `app/api/generate/route.ts` now uses the
+`@google/genai` SDK (`GoogleGenAI.models.generateContent`) with
+`responseMimeType: "application/json"` instead of the Anthropic SDK's
+`messages.create` + a `web_search` tool + pause-turn continuation loop —
+all of that Claude/search-specific machinery is gone from the route, not
+just swapped. `lib/parse-report.ts` and `lib/types.ts` didn't need
+structural changes — the JSON contract they validate is provider-agnostic
+by design, only a couple of stale "Claude"-specific comments/error
+messages were reworded. `lib/prompt.ts`'s web-search rules were replaced
+with a plain "you don't have web access, use labeled estimates" rule, and
+the model is now told to always return `"sources": []`.
+
+Because grounding is off, `sources` will be an empty array on every report
+until it's turned back on for some provider — this is expected, not a
+regression. `components/LandingPage.tsx`'s trust badges and multi-step
+loading copy previously said "Grounded with live web search" and "Powered
+by Claude"; both were now **false claims** the moment the swap happened,
+so they were changed to "Powered by AI" / "8-factor scoring" and the
+loading steps were shortened (no more ~130s "searching" phase) —
+otherwise the UI would have been actively lying about what it does, which
+directly violates this project's own "stay strict on data honesty" rule.
+**2026-07-21 (verified live once the founder added a real key):** Ran a
+real generation end-to-end for the first time — "A subscription box that
+ships pre-portioned spices for home cooks" scored 61/100 (REFINE), with a
+coherent headline, all 8 factor scores/notes, a populated radar chart, all
+10 full-report prose sections, financials, roadmap, and competitors all
+rendering correctly on their respective step pages. `responseMimeType:
+"application/json"` produced clean JSON on the first try — no parsing
+failures seen. Confirmed the sources panel correctly stays hidden (empty
+array, as instructed) rather than rendering empty.
+
+**But this surfaced a real, current problem**: Gemini's free tier is
+genuinely overloaded right now — three consecutive attempts before the
+successful one all failed with a `503 UNAVAILABLE` ("This model is
+currently experiencing high demand"), and even individual failed attempts
+were taking **60-80 seconds** before erroring out (confirmed with a
+standalone test script hitting the API directly, isolating it from any of
+this app's own code). This is Google's server load, not a bug on our
+side. Two fixes went in:
+- `app/api/generate/route.ts` now retries once on a `503` specifically
+  (checking the SDK's `ApiError.status`, not string-matching the message)
+  with a short backoff, since Gemini's own error text says these spikes
+  are "usually temporary." Anything else (bad key, quota exhausted,
+  malformed request) still fails immediately — no blind retry-everything.
+- **`maxDuration` was bumped from 60 back up to 150**, not left at the
+  "no search, so it should be fast" assumption from earlier in this same
+  session. A single overloaded attempt can itself take ~80s; with one
+  retry plus backoff, the real successful request in testing took
+  **124 seconds end to end**. 60s would have had Vercel kill the function
+  mid-request. Also added a `friendlyErrorMessage()` helper so a 503/429
+  shows the founder a plain-English message instead of the SDK's raw JSON
+  error body (which is what the UI showed before this fix — genuinely
+  ugly, confirmed via screenshot before fixing it).
+
+**Still not fully known**: whether Gemini's free tier stays this
+overloaded, or whether this was a temporary spike specific to when this
+was tested. Don't be surprised if generation is slow/retries often for
+now — that's expected given the above, not a regression. If it's
+consistently this bad, worth reconsidering `MAX_MODEL_RETRIES` (currently
+1) or the model choice before relying on this for anything real. Also
+untested: report persistence to Supabase during this same real run (the
+Stage 2 signed-in path is a separate, still-open verification item — see
+below) — this test was run signed out.
+
 ## Architecture
 
 - Next.js 15 (App Router), TypeScript, Tailwind v4 (CSS-first config in
   `app/globals.css` via `@theme`, not a `tailwind.config.js`)
-- One API route: `app/api/generate/route.ts` — calls Claude, rate-limits by
-  IP, validates input length, returns the parsed report
+- One API route: `app/api/generate/route.ts` — calls the model (currently
+  Gemini, see status log), rate-limits by IP, validates input length,
+  returns the parsed report
 - `lib/prompt.ts` — the system prompt, requests a specific JSON shape
-- `lib/parse-report.ts` — defensively parses and validates Claude's JSON.
-  **Important**: it computes `overallScore` and `verdict` itself from the 8
+- `lib/parse-report.ts` — defensively parses and validates the model's
+  JSON, provider-agnostic by design. **Important**: it computes
+  `overallScore` and `verdict` itself from the 8
   factor scores — it does NOT trust a score/verdict from the model directly.
   Don't change this without a good reason; it's what makes the score
   defensible ("the math is checkable") rather than a black box. The
@@ -126,29 +265,103 @@ latency fix that came out of this.
   longer than a couple of animation frames), so html2canvas sometimes
   captured stale/mid-transition DOM and threw. Rendering everything
   off-screen up front sidesteps the race entirely.
-- **`app/api/generate/route.ts` uses `web_search_20260318` with
-  `allowed_callers: ["direct"]`, not the tool's default.** The default for
-  this tool version routes every search through dynamic filtering (code
-  execution under the hood) — measured over **8 minutes** for a single
-  report with the default before switching. `["direct"]` skips that and
-  brought it to ~2-3 minutes. We don't need dynamic filtering's
-  context-trimming benefit since the final output is compact structured
-  JSON, not long prose quoting search results. `max_uses: 4`,
-  `export const maxDuration = 280` on the route (Vercel would otherwise
-  kill the function before a search-heavy generation finishes — verified
-  live on the actual Vercel deployment, not just locally, since dev mode
-  doesn't enforce that timeout at all).
-- **Text-block concatenation in the API route is load-bearing, not
-  defensive.** Web search's citation mechanism can split Claude's single
-  JSON response across multiple sequential `text` content blocks (confirmed
-  against Anthropic's live docs). The route concatenates every `text` block
-  in `response.content`, not just the first — taking only the first would
-  silently truncate the JSON on some requests.
+- **Historical, currently inactive (as of 2026-07-21):** the route used to
+  call Claude with a `web_search_20260318` tool (`allowed_callers:
+  ["direct"]` to skip a slow dynamic-filtering path — 8 minutes vs. ~2-3
+  for a single report), `max_uses: 4`, `maxDuration = 280`, and
+  concatenated every `text` content block in the response (web search's
+  citation mechanism could split the JSON output across several blocks —
+  keeping only the first silently truncated it on some requests). All of
+  this was removed, not just disabled, when the route switched to Gemini
+  with search off — see the 2026-07-21 status log entry for why and what
+  it was replaced with. Kept here so re-adding search grounding later
+  (to Claude, Gemini, or otherwise) doesn't require rediscovering these
+  gotchas from scratch.
+
+## Accounts (Supabase) — Stage 1 & 2
+
+- `lib/supabase/client.ts` / `lib/supabase/server.ts` / `lib/supabase/middleware.ts`
+  + root `middleware.ts` — standard `@supabase/ssr` session wiring (not the
+  deprecated `@supabase/auth-helpers-nextjs`). Next.js 15's `cookies()` is
+  async — `createClient()` in `server.ts` is itself async because of this.
+  `middleware.ts`, not `proxy.ts` — this app is on Next 15, `proxy.ts` is
+  the Next 16 convention some current Supabase examples default to.
+- `components/AuthForm.tsx` — shared client form for both `/login` and
+  `/sign-up`, Google OAuth + email/password. `app/actions/auth.ts` holds
+  the server actions (`signOut`, `confirmEmailSignup`).
+- `app/auth/callback/route.ts` — OAuth `code` exchange (Google).
+- `app/auth/confirm/page.tsx` — **a page, not a route handler.** Email/
+  password confirmation used to auto-verify on the GET request that loaded
+  it; real-world testing found Gmail's spam-link scanner (and similar
+  automated scanners on other providers) silently visits links in incoming
+  mail, which burned the single-use token before the actual user clicked
+  it — the person saw a false "invalid or expired" error even though the
+  account really was confirmed. Fixed by making the GET just render a
+  "Confirm email address" button, with the actual `verifyOtp` call only
+  happening on the POST (a Server Action, `confirmEmailSignup` in
+  `app/actions/auth.ts`) that the button triggers. **Any future
+  email-link flow in this app must follow the same rule: the GET that
+  loads the page must never have a side effect.**
+- `components/SiteHeader.tsx` — now reads the session server-side and
+  shows signed-in state (email + sign-out) vs. Log in/Sign up links.
+- `supabase/schema.sql` — a `reports` table (id, user_id, idea, report
+  jsonb, created_at) with RLS restricting rows to `auth.uid() = user_id`.
+  As of Stage 2, `app/api/generate/route.ts` inserts into it for signed-in
+  users (best-effort, never blocks the response — see status log above).
+- `app/dashboard/page.tsx` — lists a signed-in user's saved reports
+  (server component, redirects to `/login?next=/dashboard` if signed out).
+  `components/dashboard/ReportCard.tsx` — clicking a saved report doesn't
+  re-fetch anything; it calls `useReport().setReportData()` and routes to
+  `/report/summary`, reusing the same context + step UI a fresh generation
+  uses. Verdict badge styling (`TONE_COLOR`/`TONE_DIM` by verdict) is
+  duplicated from `Snapshot.tsx` rather than imported — those constants
+  aren't exported there and it's 3 lines; revisit if a third place needs
+  the same mapping.
+- `next` redirect support was added to the auth flow so a signed-out visit
+  to a protected route returns there after login: `AuthForm` takes an
+  optional `next` prop (default `/`) used for both the password-login
+  redirect and Google's `redirectTo`; `/login` and `/sign-up` read `?next=`
+  from `searchParams`. `/auth/callback` already supported this from Stage 1.
+- Env vars: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+  (documented in `.env.local.example`). No service-role key used anywhere —
+  RLS + the user's own JWT is sufficient for everything shipped so far.
+- **Production email gotchas, worth knowing before touching this again:**
+  - Supabase's *default* (no custom SMTP) email templates put the confirm
+    token in a URL hash fragment (`#access_token=...`), which a
+    server-side route can never read (fragments never reach the server).
+    Custom SMTP is required to even edit the template body — Supabase's
+    dashboard locks template editing behind having custom SMTP configured.
+    Ended up on **Resend** (free tier). The "Confirm signup" template body
+    must use `{{ .RedirectTo }}&token_hash={{ .TokenHash }}&type=email`,
+    not the default `{{ .ConfirmationURL }}` — and not `{{ .SiteURL }}`
+    either, since that's a single global setting that would break either
+    local dev or production depending which one it's pointed at;
+    `{{ .RedirectTo }}` correctly resolves to wherever the signup actually
+    happened.
+  - Resend's free/onboarding sender (`onboarding@resend.dev`) will **only
+    deliver to the exact email address the Resend account itself is
+    registered under** — not `+alias` variants of it. Silently 403s
+    (visible in Resend's own logs, not surfaced to Supabase's client
+    response) for anything else. Don't burn time re-debugging this; it's
+    expected until a real domain is verified in Resend.
+  - Supabase's Auth API returns `200`/success to the client for
+    `signUp`/`resend` calls **even when it doesn't actually send anything**
+    — e.g. when the email already belongs to a confirmed user (via any
+    provider, including Google) — to avoid leaking which emails are
+    registered. If testing shows a "successful" response but nothing ever
+    arrives and nothing shows in Resend's logs, check
+    Authentication → Users for an existing confirmed account with that
+    email before assuming SMTP is broken.
 
 ## Decisions worth knowing before you change them
 
-- **Model**: `claude-sonnet-4-6` (current stable Sonnet as of July 2026 —
-  verify this is still current before assuming it, models change).
+- **Model**: `gemini-3.5-flash` via `@google/genai`, as of 2026-07-21 — a
+  deliberate, temporary, cost-driven swap off Claude while iterating on
+  features (see status log). Web search grounding is off. Verify the model
+  name is still current/free-tier before assuming it (check
+  ai.google.dev/gemini-api/docs/pricing), and don't assume this is the
+  final provider choice — the founder wants to re-compare Claude/Gemini/
+  others on actual output quality once the product is feature-complete.
 - **Rate limiting** (`lib/rate-limit.ts`): in-memory, per-IP, 8 req/hour.
   Deliberately basic — fine for friends testing, NOT durable on serverless
   (resets on cold start) or across multiple instances. If this gets real
@@ -168,17 +381,22 @@ latency fix that came out of this.
   same API that added support for it. Don't swap back to `html2canvas`
   without re-testing PDF export.
 - **Market sizing (TAM/SAM/SOM), financials, and roadmap figures** are
-  Claude's own labeled estimates, not verified data. The prompt explicitly
+  the model's own labeled estimates, not verified data (more so than ever
+  now that web search is off — see status log). The prompt explicitly
   forbids fabricating false-precision numbers. Keep the "(estimate)"
   framing in the UI — don't let it drift into looking like sourced data.
 - **Competitor profiles are qualitative only** — name, one-line description,
-  one strength, one weakness. The prompt explicitly tells Claude not to
+  one strength, one weakness. The prompt explicitly tells the model not to
   include funding amounts, valuations, or user counts for competitors,
   since those can't be verified here and go stale immediately. Don't add
   those fields back without re-opening the "stay strict" conversation.
-- **No user accounts / no login** — this is intentional per the original
-  v1 spec (`V1_SPEC.md`), not an oversight. Report state lives in
-  `sessionStorage` via `lib/report-context.tsx`, not a database.
+- **Accounts now exist (Stage 1, 2026-07-18) — the "no login" v1 spec has
+  been deliberately superseded, don't assume the old README/spec wording
+  is still current.** See "Accounts (Supabase)" above. Generation itself
+  is still unauthenticated and un-gated on purpose — signing in is
+  additive, not a requirement. `lib/report-context.tsx`'s `sessionStorage`
+  behavior is unchanged. As of Stage 2 (2026-07-21), signed-in generation
+  does write to the `reports` table — see "Accounts (Supabase)" above.
 
 ## What's untested
 
@@ -189,6 +407,33 @@ width), including a real Claude-generated report on both localhost and the
 live Vercel deployment, a real PDF download, and manually opening several
 of the returned `sources` URLs to confirm they're real pages (not
 hallucinated). Not yet re-verified by the founder in his own browser.
+
+As of 2026-07-18: Google OAuth sign-in verified working end-to-end in
+production (a real user was created and signed in). Email/password
+sign-up + the hardened click-to-confirm flow verified working end-to-end
+locally. Password login itself against a real email/password account has
+still not been directly re-tested in production (see 2026-07-21 diagnosis
+above for why the original test looked broken but wasn't) — worth a real
+click-through before considering the email/password path fully verified
+in production.
+
+As of 2026-07-21: Stage 2 (report persistence + `/dashboard`) is
+typechecked and the signed-out redirect was confirmed live, but **the
+signed-in path itself is unverified** — needs a real login, which requires
+a password Claude doesn't have. Founder, please click through once:
+log in → generate a report → confirm a row appears in Supabase's `reports`
+table (Table Editor) → visit `/dashboard` → confirm it's listed → click it
+→ confirm it opens the same report at `/report/summary`.
+
+As of 2026-07-21 (Gemini swap): **now verified with one real, signed-out
+generation** — see the detailed status log entry above for the full
+result (61/100, REFINE, all sections/scores/financials/roadmap/competitors
+rendered correctly) and the 503-overload/retry/`maxDuration` fixes that
+came out of it. What's still genuinely unknown: whether `gemini-3.5-flash`
+is reliable across a *variety* of ideas (only one has been tried), whether
+the free tier stays this overloaded, and whether persistence-while-signed-in
+still works with the real Gemini response shape (untested — the one real
+run was signed out; see the Stage 2 item just above, which is still open).
 
 ## Competitive benchmark
 
@@ -206,20 +451,44 @@ it's wanted.
 
 ## Immediate next steps (discussed, not yet done)
 
-1. Possibly upgrade PDF export to real selectable text.
-2. Harden rate limiting before any wider traffic — generation now takes
-   ~2-3 minutes (search-heavy, up from ~90s), worth re-checking the
-   8 req/hour window still makes sense. The in-memory rate limiter
-   (`lib/rate-limit.ts`) resets on every Vercel serverless cold start —
-   live, not hypothetical, now that this is actually deployed.
-3. Mobile-width visual check for the report journey + marketing pages —
-   not yet done by an AI or the founder.
-4. Fill in the real name on the MIT `LICENSE` file if it ever needs to
-   change (currently "Zaeem Ather").
-5. The four other utility ideas discussed but not started: standalone
+1. **Add `GEMINI_API_KEY` to Vercel's env vars before deploying this
+   branch** — it's in local `.env.local` now (confirmed working) but not
+   yet in production, which still only has the old `ANTHROPIC_API_KEY`.
+2. **Founder: verify Stage 2 signed-in path for real** (see "What's
+   untested" above) — code is written and typechecked, one real
+   generation has been verified signed-out, but the persist → dashboard →
+   reopen loop while signed in has not run with a real session.
+3. The four utility ideas discussed but not started: standalone
    calculators (LTV/CAC/break-even/runway), a "recalculate with your
    numbers" override on financials, an interactive milestone checklist on
-   Roadmap, and a risk-matrix visualization for the stop signals.
+   Roadmap, and a risk-matrix visualization for the stop signals. Now that
+   `/dashboard` exists, these can be built dashboard-native as originally
+   planned.
+4. Possibly upgrade PDF export to real selectable text.
+5. Harden rate limiting before any wider traffic. A real successful
+   generation took **124 seconds** (Gemini free tier is currently
+   overloaded — see status log), slower than hoped even without search;
+   re-check whether 8 req/hour still makes sense given that. The in-memory
+   rate limiter (`lib/rate-limit.ts`) resets on every Vercel serverless
+   cold start — live, not hypothetical, now that this is actually deployed.
+6. Mobile-width visual check for the report journey + marketing pages —
+   not yet done by an AI or the founder.
+7. Fill in the real name on the MIT `LICENSE` file if it ever needs to
+   change (currently "Zaeem Ather").
+8. **Once the product is feature-complete, re-compare LLM providers**
+   (Claude vs. Gemini vs. others) on actual output quality for this exact
+   prompt/JSON contract, and decide for real — the Gemini swap was a
+   cost-saving move during development, not a quality judgment. Revisit
+   whether web search grounding comes back too.
+9. **Strategic pivot (2026-07-18):** the founder wants to step back from
+   feature-by-feature execution and think about product direction more
+   holistically before continuing — where the product needs to reach,
+   working backward from there, and how to use AI more deeply in the
+   product itself (not just as the report-generation engine). Worth
+   reading README.md's "founder operating system" long-term vision before
+   that conversation, and considering whether future features (PRDs,
+   landing pages, decks) bolt onto the current one-shot-report data model
+   or need a more unified per-idea workspace.
 
 ## Working with the founder
 

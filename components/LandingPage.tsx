@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Globe2, Sparkles, Timer, ShieldCheck } from "lucide-react";
+import { Check, Sparkles, Target, ShieldCheck } from "lucide-react";
 import type { ScoreCriterionLabel } from "@/lib/types";
 import { SCORE_CRITERION_ICONS, REPORT_STEPS } from "@/lib/report-icons";
 import { useReport } from "@/lib/report-context";
@@ -11,22 +11,19 @@ import { Footer } from "@/components/Footer";
 import { VerdictGauge, TONE_COLOR, tierForScore } from "@/components/report/Snapshot";
 import type { ValidationReport } from "@/lib/types";
 
-// Durations are weighted toward reality, not evenly spaced — searching is
-// genuinely the longest phase (multiple sequential web_search calls), so it
-// gets most of the runway instead of the progress bar sitting frozen on the
-// last step for two-plus minutes.
+// No web search in the current generation path (see HANDOFF.md) — a single
+// model call, so these steps are shorter and more evenly weighted than the
+// old search-heavy timing.
 const GENERATION_STEPS = [
-  { label: "Reading your idea", durationMs: 3000 },
-  { label: "Searching the web for real data", durationMs: 130000 },
-  { label: "Scoring 8 factors", durationMs: 15000 },
+  { label: "Reading your idea", durationMs: 2000 },
+  { label: "Scoring 8 factors", durationMs: 8000 },
   { label: "Building your report", durationMs: Infinity },
 ];
 
 const TRUST_BADGES = [
   { icon: ShieldCheck, label: "No login required" },
-  { icon: Timer, label: "~2-3 minutes" },
-  { icon: Globe2, label: "Grounded with live web search" },
-  { icon: Sparkles, label: "Powered by Claude" },
+  { icon: Sparkles, label: "Powered by AI" },
+  { icon: Target, label: "8-factor scoring" },
 ];
 
 // Fixed sample data for the hero preview — never generated, never claimed to
@@ -188,7 +185,7 @@ export default function LandingPage() {
       }
 
       if (!data.report?.sections?.length) {
-        throw new Error("Claude returned an empty report.");
+        throw new Error("The model returned an empty report.");
       }
 
       setReportData(idea.trim(), data.report);

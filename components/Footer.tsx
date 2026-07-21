@@ -39,8 +39,8 @@ export function Footer() {
 
       <div className="border-t border-slate-200/80">
         <p className="mx-auto max-w-5xl px-6 py-4 text-xs leading-relaxed text-slate-400">
-          Reports are AI-generated estimates grounded in live web search, not verified market research or
-          financial advice — always labeled, never dressed up as certainty.
+          Reports are AI-generated estimates, not verified market research or financial advice — always
+          labeled, never dressed up as certainty.
         </p>
       </div>
     </footer>

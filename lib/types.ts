@@ -92,7 +92,7 @@ export type CompetitiveLandscape = {
 
 export type Source = {
   label: string; // what this source supports, e.g. "Global market size"
-  url: string; // must be a real URL Claude actually retrieved via web_search
+  url: string; // must be a real URL the model actually retrieved via web search
 };
 
 export type ValidationReport = {
@@ -105,7 +105,7 @@ export type ValidationReport = {
   financials: Financials;
   roadmap: Roadmap;
   competitive: CompetitiveLandscape;
-  sources: Source[]; // real pages Claude retrieved via web_search — empty if it didn't search
+  sources: Source[]; // real pages retrieved via web search — currently always empty, see HANDOFF.md
   // Computed in code from `scores` — never trusted from the model directly,
   // so the number on screen always matches the math behind it.
   overallScore: number;

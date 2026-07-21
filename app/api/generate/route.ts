@@ -1,34 +1,59 @@
-import Anthropic from "@anthropic-ai/sdk";
-import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
+import { GoogleGenAI } from "@google/genai";
 import { buildValidationUserPrompt, VALIDATION_SYSTEM_PROMPT } from "@/lib/prompt";
 import { parseValidationReport } from "@/lib/parse-report";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { createClient } from "@/lib/supabase/server";
 
 const MAX_IDEA_LENGTH = 500;
 
-// Search adds real wall-clock time on top of generation — measured ~150s
-// for a 3-search report even with direct (non-dynamic-filtering) calls, so
-// give real headroom rather than hitting Vercel's default function timeout.
-// Requires the deployment's plan/config to actually allow this — verify on
-// the live Vercel deployment, not just locally.
-export const maxDuration = 280;
+// No web search in this generation path (see HANDOFF.md), but Gemini's free
+// tier is currently overloaded often enough that a single call can itself
+// take 60-80s before failing with 503 (measured live, not hypothetical) —
+// so this needs real headroom for the retry below, not the bare minimum a
+// single fast call would suggest.
+export const maxDuration = 150;
 
-// A search-heavy turn can pause (documented API behavior for long-running
-// web_search sessions); resend the paused turn to let it finish, bounded so
-// a pathological loop can't run away.
-const MAX_PAUSE_CONTINUATIONS = 3;
+// Gemini's free tier genuinely returns 503 "high demand" fairly often right
+// now — confirmed live while testing this integration. The API's own error
+// message says spikes are "usually temporary," so retry once with backoff
+// before giving up; anything else (bad key, quota exhausted, malformed
+// request) fails immediately. Only one retry, not several: a single attempt
+// has been observed taking up to ~80s on its own while overloaded, so each
+// extra retry meaningfully eats into `maxDuration`.
+const MAX_MODEL_RETRIES = 1;
+const RETRY_BACKOFF_MS = 2000;
 
-// `allowed_callers: ["direct"]` skips dynamic filtering (which routes every
-// search through an extra code-execution round trip — measured well over
-// 5 minutes for a single report with the default). We don't need dynamic
-// filtering's context-trimming benefit since the final output is compact
-// structured JSON, not long prose quoting search results verbatim.
-const WEB_SEARCH_TOOL = {
-  type: "web_search_20260318" as const,
-  name: "web_search" as const,
-  max_uses: 4,
-  allowed_callers: ["direct" as const],
-};
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getApiErrorStatus(error: unknown): number | undefined {
+  if (typeof error === "object" && error !== null && "status" in error && typeof error.status === "number") {
+    return error.status;
+  }
+  return undefined;
+}
+
+function isRetryableStatus(error: unknown): boolean {
+  return getApiErrorStatus(error) === 503;
+}
+
+// The Gemini SDK's error `.message` is the raw API response body (a JSON
+// string) — readable in server logs, but showing that to a founder in the
+// UI is neither friendly nor honest about what actually went wrong.
+function friendlyErrorMessage(error: unknown): string {
+  const status = getApiErrorStatus(error);
+
+  if (status === 503) {
+    return "The AI model is experiencing high demand right now. Please wait a moment and try again.";
+  }
+
+  if (status === 429) {
+    return "The free API quota has been used up for now. Try again later, or check your Gemini API plan.";
+  }
+
+  return error instanceof Error ? error.message : "Something went wrong while generating your report.";
+}
 
 function getClientIp(request: Request): string {
   // Vercel/most proxies set this; falls back to a shared bucket if absent
@@ -67,75 +92,77 @@ export async function POST(request: Request) {
       );
     }
 
-    const apiKey = process.env.ANTHROPIC_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
       return Response.json(
         {
-          error:
-            "Claude API key is missing. Add ANTHROPIC_API_KEY to your .env.local file and restart the server.",
+          error: "Gemini API key is missing. Add GEMINI_API_KEY to your .env.local file and restart the server.",
         },
         { status: 500 },
       );
     }
 
-    const anthropic = new Anthropic({ apiKey });
-
-    const messages: MessageParam[] = [
-      {
-        role: "user",
-        content: buildValidationUserPrompt(idea),
-      },
-    ];
+    const ai = new GoogleGenAI({ apiKey });
 
     const generateStart = Date.now();
 
-    let response = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 8000,
-      temperature: 0.7,
-      system: VALIDATION_SYSTEM_PROMPT,
-      messages,
-      tools: [WEB_SEARCH_TOOL],
-    });
+    let response;
+    let attempt = 0;
 
-    let continuations = 0;
-    while (response.stop_reason === "pause_turn" && continuations < MAX_PAUSE_CONTINUATIONS) {
-      messages.push({ role: "assistant", content: response.content });
-      response = await anthropic.messages.create({
-        model: "claude-sonnet-4-6",
-        max_tokens: 8000,
-        temperature: 0.7,
-        system: VALIDATION_SYSTEM_PROMPT,
-        messages,
-        tools: [WEB_SEARCH_TOOL],
-      });
-      continuations += 1;
+    while (true) {
+      try {
+        response = await ai.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: buildValidationUserPrompt(idea),
+          config: {
+            systemInstruction: VALIDATION_SYSTEM_PROMPT,
+            temperature: 0.7,
+            responseMimeType: "application/json",
+          },
+        });
+        break;
+      } catch (error) {
+        if (attempt >= MAX_MODEL_RETRIES || !isRetryableStatus(error)) throw error;
+        attempt += 1;
+        console.log(`[generate] Gemini returned 503 (high demand), retry ${attempt}/${MAX_MODEL_RETRIES}`);
+        await sleep(RETRY_BACKOFF_MS * attempt);
+      }
     }
 
-    console.log(
-      `[generate] ${Date.now() - generateStart}ms, ${response.usage.server_tool_use?.web_search_requests ?? 0} searches, ${continuations} pause continuations, stop_reason=${response.stop_reason}`,
-    );
+    console.log(`[generate] ${Date.now() - generateStart}ms, model=gemini-3.5-flash, retries=${attempt}`);
 
-    // Web search's citation mechanism can split Claude's single JSON output
-    // across multiple sequential text blocks — concatenate all of them, not
-    // just the first, or the JSON silently truncates.
-    const text = response.content
-      .filter((block) => block.type === "text")
-      .map((block) => block.text)
-      .join("");
+    const text = response.text ?? "";
 
     if (!text.trim()) {
-      return Response.json({ error: "Claude returned an empty response." }, { status: 500 });
+      return Response.json({ error: "The model returned an empty response." }, { status: 500 });
     }
 
     const report = parseValidationReport(text);
 
+    // Best-effort save for signed-in users — generation already succeeded,
+    // so a persistence failure (RLS misconfig, transient DB error, etc.)
+    // should never turn into a failed response. Anonymous generation is
+    // unaffected: `getUser()` just returns null and this is skipped.
+    try {
+      const supabase = await createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (user) {
+        const { error: insertError } = await supabase.from("reports").insert({ user_id: user.id, idea, report });
+        if (insertError) {
+          console.error("[generate] failed to save report:", insertError.message);
+        }
+      }
+    } catch (persistError) {
+      console.error("[generate] report persistence error:", persistError);
+    }
+
     return Response.json({ idea, report });
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Something went wrong while generating your report.";
-
-    return Response.json({ error: message }, { status: 500 });
+    console.error("[generate] failed:", error);
+    return Response.json({ error: friendlyErrorMessage(error) }, { status: 500 });
   }
 }

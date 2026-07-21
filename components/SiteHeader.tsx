@@ -65,6 +65,9 @@ function AuthSection() {
 
   return (
     <form action={signOut} className="flex items-center gap-3">
+      <Link href="/dashboard" className="text-sm font-medium text-slate-500 hover:text-slate-900">
+        Dashboard
+      </Link>
       <span className="hidden text-sm text-slate-500 sm:inline">{user.email}</span>
       <button
         type="submit"
