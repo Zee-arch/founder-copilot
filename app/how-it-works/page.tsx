@@ -17,8 +17,8 @@ const PROCESS_STEPS = [
   },
   {
     icon: Sparkles,
-    title: "Claude scores it honestly",
-    body: "Claude scores 8 independent factors — problem urgency, market size, feasibility, and more. FounderCopilot computes the overall score and verdict from those 8 numbers in code, not from a separate model opinion, so the number on screen always matches the math behind it.",
+    title: "The AI scores it honestly",
+    body: "The model scores 8 independent factors — problem urgency, market size, feasibility, and more. FounderCopilot computes the overall score and verdict from those 8 numbers in code, not from a separate model opinion, so the number on screen always matches the math behind it.",
   },
   {
     icon: ArrowRight,

@@ -53,3 +53,26 @@
     transparent 70%
   );
 }
+
+/* One-shot entrance for the hero — plays once on first paint, never loops,
+   so it reads as "the page just loaded" rather than as decorative motion. */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-rise-in {
+  animation: rise-in 600ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-rise-in {
+    animation: none;
+  }
+}
