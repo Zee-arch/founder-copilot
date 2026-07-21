@@ -155,21 +155,48 @@ so they were changed to "Powered by AI" / "8-factor scoring" and the
 loading steps were shortened (no more ~130s "searching" phase) —
 otherwise the UI would have been actively lying about what it does, which
 directly violates this project's own "stay strict on data honesty" rule.
-`maxDuration` on the route dropped from 280s to 60s since there's no
-multi-minute search loop to wait out anymore.
+**2026-07-21 (verified live once the founder added a real key):** Ran a
+real generation end-to-end for the first time — "A subscription box that
+ships pre-portioned spices for home cooks" scored 61/100 (REFINE), with a
+coherent headline, all 8 factor scores/notes, a populated radar chart, all
+10 full-report prose sections, financials, roadmap, and competitors all
+rendering correctly on their respective step pages. `responseMimeType:
+"application/json"` produced clean JSON on the first try — no parsing
+failures seen. Confirmed the sources panel correctly stays hidden (empty
+array, as instructed) rather than rendering empty.
 
-**Not run end-to-end** — no `GEMINI_API_KEY` exists yet anywhere (checked
-`.env.local`: only the old `ANTHROPIC_API_KEY` and Supabase keys are
-there). Typechecked clean, and the request path was verified live up to
-the point of calling Gemini — submitting the form correctly surfaced
-"Gemini API key is missing. Add GEMINI_API_KEY to your .env.local file and
-restart the server." with no crash, confirming the wiring is right. **The
-founder needs to get a free key from
-[aistudio.google.com/apikey](https://aistudio.google.com/apikey), add
-`GEMINI_API_KEY=...` to `.env.local`, and run one real generation** before
-this is considered actually working — model output quality/JSON
-reliability for `gemini-3.5-flash` on this exact prompt is completely
-unverified.
+**But this surfaced a real, current problem**: Gemini's free tier is
+genuinely overloaded right now — three consecutive attempts before the
+successful one all failed with a `503 UNAVAILABLE` ("This model is
+currently experiencing high demand"), and even individual failed attempts
+were taking **60-80 seconds** before erroring out (confirmed with a
+standalone test script hitting the API directly, isolating it from any of
+this app's own code). This is Google's server load, not a bug on our
+side. Two fixes went in:
+- `app/api/generate/route.ts` now retries once on a `503` specifically
+  (checking the SDK's `ApiError.status`, not string-matching the message)
+  with a short backoff, since Gemini's own error text says these spikes
+  are "usually temporary." Anything else (bad key, quota exhausted,
+  malformed request) still fails immediately — no blind retry-everything.
+- **`maxDuration` was bumped from 60 back up to 150**, not left at the
+  "no search, so it should be fast" assumption from earlier in this same
+  session. A single overloaded attempt can itself take ~80s; with one
+  retry plus backoff, the real successful request in testing took
+  **124 seconds end to end**. 60s would have had Vercel kill the function
+  mid-request. Also added a `friendlyErrorMessage()` helper so a 503/429
+  shows the founder a plain-English message instead of the SDK's raw JSON
+  error body (which is what the UI showed before this fix — genuinely
+  ugly, confirmed via screenshot before fixing it).
+
+**Still not fully known**: whether Gemini's free tier stays this
+overloaded, or whether this was a temporary spike specific to when this
+was tested. Don't be surprised if generation is slow/retries often for
+now — that's expected given the above, not a regression. If it's
+consistently this bad, worth reconsidering `MAX_MODEL_RETRIES` (currently
+1) or the model choice before relying on this for anything real. Also
+untested: report persistence to Supabase during this same real run (the
+Stage 2 signed-in path is a separate, still-open verification item — see
+below) — this test was run signed out.
 
 ## Architecture
 
@@ -398,12 +425,15 @@ log in → generate a report → confirm a row appears in Supabase's `reports`
 table (Table Editor) → visit `/dashboard` → confirm it's listed → click it
 → confirm it opens the same report at `/report/summary`.
 
-As of 2026-07-21 (Gemini swap): **completely unrun.** No `GEMINI_API_KEY`
-exists in `.env.local` yet. Typechecked and the "key missing" error path
-was confirmed live, but zero real Gemini output has been seen — not the
-JSON reliability, not whether `gemini-3.5-flash` reliably follows the
-10-section/8-score/exact-shape prompt, nothing. Treat report quality as
-completely unknown until a real key is added and a real generation runs.
+As of 2026-07-21 (Gemini swap): **now verified with one real, signed-out
+generation** — see the detailed status log entry above for the full
+result (61/100, REFINE, all sections/scores/financials/roadmap/competitors
+rendered correctly) and the 503-overload/retry/`maxDuration` fixes that
+came out of it. What's still genuinely unknown: whether `gemini-3.5-flash`
+is reliable across a *variety* of ideas (only one has been tried), whether
+the free tier stays this overloaded, and whether persistence-while-signed-in
+still works with the real Gemini response shape (untested — the one real
+run was signed out; see the Stage 2 item just above, which is still open).
 
 ## Competitive benchmark
 
@@ -421,16 +451,13 @@ it's wanted.
 
 ## Immediate next steps (discussed, not yet done)
 
-1. **Founder: get a free `GEMINI_API_KEY` and run one real generation.**
-   Nothing about the Gemini swap has been verified beyond "it typechecks
-   and fails cleanly without a key" — see "What's untested" above. Get a
-   key at aistudio.google.com/apikey, add it to `.env.local`, run
-   `npm run dev`, and try a real idea. Also add the same key to Vercel's
-   env vars before deploying this branch, or production will break.
+1. **Add `GEMINI_API_KEY` to Vercel's env vars before deploying this
+   branch** — it's in local `.env.local` now (confirmed working) but not
+   yet in production, which still only has the old `ANTHROPIC_API_KEY`.
 2. **Founder: verify Stage 2 signed-in path for real** (see "What's
-   untested" above) — code is written and typechecked but the actual
-   generate → persist → dashboard → reopen loop has not run with a real
-   session.
+   untested" above) — code is written and typechecked, one real
+   generation has been verified signed-out, but the persist → dashboard →
+   reopen loop while signed in has not run with a real session.
 3. The four utility ideas discussed but not started: standalone
    calculators (LTV/CAC/break-even/runway), a "recalculate with your
    numbers" override on financials, an interactive milestone checklist on
@@ -438,9 +465,10 @@ it's wanted.
    `/dashboard` exists, these can be built dashboard-native as originally
    planned.
 4. Possibly upgrade PDF export to real selectable text.
-5. Harden rate limiting before any wider traffic. Generation should be
-   faster now with search off (unverified — see above); re-check whether
-   8 req/hour still makes sense once real timing is known. The in-memory
+5. Harden rate limiting before any wider traffic. A real successful
+   generation took **124 seconds** (Gemini free tier is currently
+   overloaded — see status log), slower than hoped even without search;
+   re-check whether 8 req/hour still makes sense given that. The in-memory
    rate limiter (`lib/rate-limit.ts`) resets on every Vercel serverless
    cold start — live, not hypothetical, now that this is actually deployed.
 6. Mobile-width visual check for the report journey + marketing pages —
