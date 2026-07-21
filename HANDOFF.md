@@ -198,6 +198,45 @@ untested: report persistence to Supabase during this same real run (the
 Stage 2 signed-in path is a separate, still-open verification item — see
 below) — this test was run signed out.
 
+**2026-07-21/22 (deploy + live verification):** All of the above had only
+ever been committed **locally** — never pushed, never merged. This is why
+the live Vercel site still showed "Powered by Claude" after the swap: the
+code that changed it had never left the laptop. Fixed by actually pushing
+and merging (PR #3, `https://github.com/Zee-arch/founder-copilot/pull/3`).
+
+That merge surfaced a real conflict: the local `auth-foundation` branch
+had been branched *before* the Phase 4 landing redesign (PR #1) was
+merged into `main`, so it never had `Footer.tsx`, the two-column hero, or
+`ReportPreviewCard` — and had been edited this whole session on a stale
+copy of `LandingPage.tsx`. Resolved by merging `main` in and keeping this
+branch's honest copy on top of Phase 4's layout (not by discarding either
+side). That same merge surfaced **two more stale claims that existed only
+on `main`**, invisible to the earlier Gemini-swap work because it never
+had these files: How It Works' "Claude scores it honestly" step, and the
+Footer's "grounded in live web search" line. Both rewritten the same way
+as the LandingPage badges.
+
+**Second production bug, found only by actually testing generation live**:
+`maxDuration = 150` (set earlier this session based on one local
+timing) was too low — a real request on Vercel got killed mid-retry,
+and the frontend crashed with a raw "Unexpected token 'A'..." error
+trying to `JSON.parse()` Vercel's own non-JSON timeout page. Fixed in
+PR #4 (`https://github.com/Zee-arch/founder-copilot/pull/4`): `maxDuration`
+back to **280** (the value already proven safe on this Vercel plan from
+the old Claude+search era — reused instead of guessing a third number),
+and `LandingPage.tsx`'s fetch handling now catches a non-JSON response
+body and shows a real message instead of crashing on the parse.
+
+**Confirmed live end-to-end on the actual production domain**
+(`founder-copilot-flame.vercel.app`) after both fixes: "A marketplace
+connecting local farmers directly with restaurants" scored 69/100
+(REFINE), full report rendered correctly. Getting there took **5 attempts
+on production** — 3× `503` high-demand, 1× the `maxDuration` timeout above,
+then a success — consistent with local testing. **Gemini's free tier
+overload is not a one-off blip; treat it as the current normal** until
+proven otherwise. If report generation feels unreliable for users right
+now, this is why — not a regression to chase.
+
 ## Architecture
 
 - Next.js 15 (App Router), TypeScript, Tailwind v4 (CSS-first config in
@@ -425,15 +464,19 @@ log in → generate a report → confirm a row appears in Supabase's `reports`
 table (Table Editor) → visit `/dashboard` → confirm it's listed → click it
 → confirm it opens the same report at `/report/summary`.
 
-As of 2026-07-21 (Gemini swap): **now verified with one real, signed-out
-generation** — see the detailed status log entry above for the full
-result (61/100, REFINE, all sections/scores/financials/roadmap/competitors
-rendered correctly) and the 503-overload/retry/`maxDuration` fixes that
-came out of it. What's still genuinely unknown: whether `gemini-3.5-flash`
-is reliable across a *variety* of ideas (only one has been tried), whether
-the free tier stays this overloaded, and whether persistence-while-signed-in
-still works with the real Gemini response shape (untested — the one real
-run was signed out; see the Stage 2 item just above, which is still open).
+As of 2026-07-21 (Gemini swap): **now verified live in production**, not
+just locally — two different ideas, both signed-out, both eventually
+succeeded (61/100 and 69/100) after several 503/timeout retries each. See
+the "deploy + live verification" status log entry for the full story,
+including two bugs (`maxDuration` too low, a merge conflict that hid two
+more stale Claude/web-search claims) that only surfaced once this was
+actually pushed and tested for real — this is exactly why "typechecks
+and works locally" was never treated as "done" earlier in this session.
+What's still genuinely unknown: whether `gemini-3.5-flash` is reliable
+across a *wide variety* of ideas (only two have been tried), and whether
+persistence-while-signed-in still works with the real Gemini response
+shape (untested — both real runs were signed out; see the Stage 2 item
+just above, which is still open).
 
 ## Competitive benchmark
 
@@ -451,9 +494,12 @@ it's wanted.
 
 ## Immediate next steps (discussed, not yet done)
 
-1. **Add `GEMINI_API_KEY` to Vercel's env vars before deploying this
-   branch** — it's in local `.env.local` now (confirmed working) but not
-   yet in production, which still only has the old `ANTHROPIC_API_KEY`.
+1. ~~Add `GEMINI_API_KEY` to Vercel's env vars~~ **Done — deployed and
+   verified live on production as of 2026-07-21/22.** Everything in this
+   session (Stage 2, Gemini swap, both bugfixes) is merged to `main` and
+   confirmed working on `founder-copilot-flame.vercel.app`, including a
+   real end-to-end generation. See the "deploy + live verification"
+   status log entry for the full story.
 2. **Founder: verify Stage 2 signed-in path for real** (see "What's
    untested" above) — code is written and typechecked, one real
    generation has been verified signed-out, but the persist → dashboard →
