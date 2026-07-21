@@ -369,6 +369,63 @@ report will have one — some ideas' competitors just won't have a public
 figure Gemini's search turns up, which is correct behavior, not a bug),
 does its link actually open a real page, and does the value look sane.
 
+**2026-07-22 (same day): idea-category classification added to steer
+report emphasis, not the schema.** The founder pointed out a real gap:
+every idea got the same fixed 8-factor/10-section template regardless of
+what it actually was — a lab-grown-organs idea and a spice subscription
+box read like the same shape with different words filled in.
+
+`lib/types.ts` adds `IDEA_CATEGORIES` (`Consumer/Wellness`, `B2B SaaS`,
+`Marketplace`, `Hyperlocal/Local Service`, `Hardware`, `Regulated
+(Health/Finance)`, `General` as the safe fallback) and a `category` field
+on `ValidationReport`. This is computed by the **same single generation
+call**, not a second API call — `lib/prompt.ts` now instructs the model
+to silently classify the idea first, put its choice in a `category`
+field, then let that classification adjust **emphasis within the fixed
+backbone**: a regulatory caution for Regulated ideas, single-metro
+framing instead of national TAM for Hyperlocal ideas, a network-effects/
+chicken-and-egg note for Marketplaces, sales-cycle/contract-value framing
+for B2B SaaS, CAC/retention framing for Consumer, manufacturing lead-time
+framing for Hardware. The 8 scores and 10 section titles never change —
+only what the model chooses to say within them does. `category` itself is
+clamped in `lib/parse-report.ts` against the fixed list (same
+non-throwing, graceful-fallback tier as milestone phase) — an
+invalid/missing value silently becomes `"General"` (no special emphasis)
+rather than breaking generation.
+
+**Regulation-naming is a prompt-level rule, not code-enforced — and
+that's a deliberate, considered choice, not an oversight.** The founder
+asked that a named specific regulation/statute only appear when grounding
+backs it, generic cautions being fine either way. Unlike competitor
+figures (which have a concrete URL to cross-check structurally), a named
+regulation appears inside free-flowing prose (Risks, Regulatory Ease's
+note) with no clean anchor to validate against in code — detecting "did
+the model name a specific law" would mean regex/keyword-matching a list
+of known regulation names, which is fragile and incomplete (misses
+anything not on the list, false-positives on generic mentions). This is
+the same trust tier the "don't fabricate precise market stats" rule has
+always used in this app — prompt instruction + trust, not a structural
+guarantee. Flagging this explicitly rather than overselling it as
+equally rock-solid as the competitor-figure enforcement, which genuinely
+is structural.
+
+**Not yet live-verified — same persistent quota blocker as the last two
+entries, now confirmed to be a real daily quota, not a transient spike.**
+Multiple attempts across this session and the next, hours apart, all hit
+the identical `429 RESOURCE_EXHAUSTED` on the same API key. Confirmed
+(again) that the request path is solid — reaches Gemini with the now-
+larger prompt (classification + emphasis rules + regulation constraint
+added on top of everything already there) and fails cleanly, no crash,
+no schema validation error. Typechecked and linted clean. **Completely
+unverified: whether the model actually classifies correctly, whether the
+emphasis differences are real and noticeable (not just present in the
+prompt), and whether the regulation-naming constraint holds** — none of
+this can be confirmed without a real generation. Founder: once quota
+resets, this is worth testing with at least two very different ideas
+(e.g. one obviously Regulated, one obviously Hyperlocal) side by side to
+see whether the reports actually read differently, not just whether
+`category` comes back populated.
+
 ## Architecture
 
 - Next.js 15 (App Router), TypeScript, Tailwind v4 (CSS-first config in
@@ -580,6 +637,14 @@ does its link actually open a real page, and does the value look sane.
   fabricate" policy itself has loosened — it's enforced at the type level
   in `lib/types.ts` (`SourcedFigure` requires a `Source`), not just by
   asking the model nicely.
+- **Idea category (2026-07-22) is emphasis-only, never structural.** The 8
+  score criteria and 10 section titles are fixed regardless of
+  `category` — don't add category-conditional fields to the schema
+  itself (a "Regulated" idea does NOT get an 11th section, a "Hardware"
+  idea does NOT get a 9th score). If category-specific structure is ever
+  wanted, that's a deliberate future decision, not something to slide in
+  under "emphasis." `category` falls back to `"General"` (no special
+  emphasis) on anything invalid/missing — never throws.
 - **Accounts now exist (Stage 1, 2026-07-18) — the "no login" v1 spec has
   been deliberately superseded, don't assume the old README/spec wording
   is still current.** See "Accounts (Supabase)" above. Generation itself

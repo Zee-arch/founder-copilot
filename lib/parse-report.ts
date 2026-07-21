@@ -1,10 +1,12 @@
 import {
+  IDEA_CATEGORIES,
   MILESTONE_PHASES,
   REPORT_SECTION_TITLES,
   SCORE_CRITERIA,
   type Competitor,
   type CompetitiveLandscape,
   type Financials,
+  type IdeaCategory,
   type MarketSizing,
   type Milestone,
   type MilestonePhase,
@@ -68,6 +70,7 @@ type RawCompetitor = {
 };
 type RawJson = {
   headline?: unknown;
+  category?: unknown;
   scores?: RawScore[];
   market?: { tam?: unknown; sam?: unknown; som?: unknown; cagr?: unknown };
   goSignals?: unknown[];
@@ -229,8 +232,18 @@ export function parseValidationReport(text: string, groundedSources: Source[]): 
       ? parsed.headline.trim()
       : "Validation report generated.";
 
+  // --- category: informational, steers the model's own emphasis (see
+  // lib/prompt.ts) — never trusted to gate or restructure anything in code,
+  // so an invalid/missing value just falls back to the no-special-emphasis
+  // default rather than throwing, same tier as milestone phase above.
+  const ideaCategories = new Set<string>(IDEA_CATEGORIES);
+  const category: IdeaCategory = (
+    typeof parsed.category === "string" && ideaCategories.has(parsed.category) ? parsed.category : "General"
+  ) as IdeaCategory;
+
   return {
     headline,
+    category,
     scores,
     market,
     goSignals,

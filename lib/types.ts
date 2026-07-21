@@ -18,6 +18,24 @@ export type ReportSection = {
   content: string;
 };
 
+// Classified by the model as part of the same generation call (see
+// lib/prompt.ts) — used to steer emphasis within the fixed 8-factor/
+// 10-section backbone (different framing, not different fields), never to
+// change the schema per category. "General" is the safe fallback for an
+// idea that doesn't cleanly fit one of the more specific buckets, and what
+// lib/parse-report.ts falls back to if the model's value doesn't match.
+export const IDEA_CATEGORIES = [
+  "Consumer/Wellness",
+  "B2B SaaS",
+  "Marketplace",
+  "Hyperlocal/Local Service",
+  "Hardware",
+  "Regulated (Health/Finance)",
+  "General",
+] as const;
+
+export type IdeaCategory = (typeof IDEA_CATEGORIES)[number];
+
 // The 8 factors scored for every idea, in this exact order. Each is framed so
 // "higher is always better" — makes the radar chart intuitive at a glance
 // (a lopsided shape pointing outward = strength, pulled inward = weakness).
@@ -113,6 +131,7 @@ export type CompetitiveLandscape = {
 
 export type ValidationReport = {
   headline: string; // one-line qualitative judgment on the idea
+  category: IdeaCategory; // classified by the model, steers emphasis only — see lib/prompt.ts
   scores: ScoreCriterion[]; // exactly 8, matching SCORE_CRITERIA order
   market: MarketSizing;
   goSignals: string[]; // reasons the idea has momentum

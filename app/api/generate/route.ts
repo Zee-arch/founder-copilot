@@ -187,6 +187,8 @@ export async function POST(request: Request) {
 
     const report = parseValidationReport(text, sources);
 
+    console.log(`[generate] category=${report.category}`);
+
     // Best-effort save for signed-in users — generation already succeeded,
     // so a persistence failure (RLS misconfig, transient DB error, etc.)
     // should never turn into a failed response. Anonymous generation is
