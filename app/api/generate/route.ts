@@ -3,17 +3,18 @@ import { buildValidationUserPrompt, VALIDATION_SYSTEM_PROMPT } from "@/lib/promp
 import { parseValidationReport } from "@/lib/parse-report";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { createClient } from "@/lib/supabase/server";
+import type { Source } from "@/lib/types";
 
 const MAX_IDEA_LENGTH = 500;
 
-// No web search in this generation path (see HANDOFF.md), but Gemini's free
-// tier is currently overloaded often enough that a single call can itself
-// take 60-80s before failing with 503 (measured live, not hypothetical).
-// 150 was tried first and genuinely too low — a real production request
-// (one retry included) got killed by Vercel mid-flight, returning a plain
-// non-JSON error page instead of ours. 280 was already proven safe on this
-// project's Vercel plan for the old Claude+search path, so reuse that
-// known-good ceiling rather than guess a new number a second time.
+// Search grounding is back on (2026-07-22, see HANDOFF.md) — was off for a
+// few days purely to cut costs while iterating, restored because it was the
+// single biggest quality/competitive gap. Was already 280 for the old
+// Claude+search path and stayed 280 through the brief no-search window
+// (proven safe on this Vercel plan either way) — grounding adds real
+// latency on top of Gemini's free tier already being prone to 60-80s+
+// stalls under load (measured live), so this needs the same headroom as
+// before, not less.
 export const maxDuration = 280;
 
 // Gemini's free tier genuinely returns 503 "high demand" fairly often right
@@ -22,9 +23,20 @@ export const maxDuration = 280;
 // before giving up; anything else (bad key, quota exhausted, malformed
 // request) fails immediately. Only one retry, not several: a single attempt
 // has been observed taking up to ~80s on its own while overloaded, so each
-// extra retry meaningfully eats into `maxDuration`.
+// extra retry meaningfully eats into `maxDuration` — more so now that
+// grounding adds its own latency on top.
 const MAX_MODEL_RETRIES = 1;
 const RETRY_BACKOFF_MS = 2000;
+
+// Google's googleSearch tool cannot be combined with responseMimeType:
+// "application/json" (confirmed against Google's own docs/issue tracker —
+// tool use and native JSON mode are mutually exclusive on this API). So
+// this relies on the prompt's own "return ONLY valid JSON" instruction
+// plus lib/parse-report.ts's existing defensive extractJson() fence/brace
+// matching, the same mechanism the original Claude+search version always
+// used. Not a new risk class, just giving up the JSON-mode reliability
+// boost gained during the brief no-search window.
+const GROUNDING_TOOL = { googleSearch: {} };
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -56,6 +68,34 @@ function friendlyErrorMessage(error: unknown): string {
   }
 
   return error instanceof Error ? error.message : "Something went wrong while generating your report.";
+}
+
+// Sources come from Gemini's own groundingMetadata, not from asking the
+// model to self-report a "sources" field in its JSON — groundingChunks are
+// structured data the API actually returned for pages it really retrieved,
+// which is a stronger guarantee than trusting the model's own claim (which
+// is all the original Claude version had, since Claude self-reports
+// sources inside its JSON response instead). Same defensive filtering tier
+// as everything else in lib/parse-report.ts: never hard-throws on missing
+// or malformed grounding data.
+const HTTP_URL_PATTERN = /^https?:\/\//i;
+
+function extractGroundingSources(response: Awaited<ReturnType<GoogleGenAI["models"]["generateContent"]>>): Source[] {
+  const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];
+  const seen = new Set<string>();
+
+  return chunks
+    .map((chunk) => ({ url: chunk.web?.uri?.trim(), label: chunk.web?.title?.trim() }))
+    .filter(
+      (s): s is { url: string; label: string } =>
+        typeof s.url === "string" && HTTP_URL_PATTERN.test(s.url) && typeof s.label === "string" && s.label.length > 0,
+    )
+    .filter((s) => {
+      if (seen.has(s.url)) return false;
+      seen.add(s.url);
+      return true;
+    })
+    .slice(0, 8);
 }
 
 function getClientIp(request: Request): string {
@@ -121,7 +161,7 @@ export async function POST(request: Request) {
           config: {
             systemInstruction: VALIDATION_SYSTEM_PROMPT,
             temperature: 0.7,
-            responseMimeType: "application/json",
+            tools: [GROUNDING_TOOL],
           },
         });
         break;
@@ -133,7 +173,11 @@ export async function POST(request: Request) {
       }
     }
 
-    console.log(`[generate] ${Date.now() - generateStart}ms, model=gemini-3.5-flash, retries=${attempt}`);
+    const sources = extractGroundingSources(response);
+
+    console.log(
+      `[generate] ${Date.now() - generateStart}ms, model=gemini-3.5-flash, retries=${attempt}, sources=${sources.length}`,
+    );
 
     const text = response.text ?? "";
 
@@ -141,7 +185,7 @@ export async function POST(request: Request) {
       return Response.json({ error: "The model returned an empty response." }, { status: 500 });
     }
 
-    const report = parseValidationReport(text);
+    const report = { ...parseValidationReport(text), sources };
 
     // Best-effort save for signed-in users — generation already succeeded,
     // so a persistence failure (RLS misconfig, transient DB error, etc.)

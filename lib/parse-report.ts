@@ -193,10 +193,12 @@ export function parseValidationReport(text: string): ValidationReport {
       ? parsed.headline.trim()
       : "Validation report generated.";
 
-  // --- sources: no web search in the current generation path (see
-  // HANDOFF.md), so the model is instructed to always return an empty
-  // array. Still filtered defensively rather than trusted, same as
-  // everything else — never the hard-throw tier — in case that changes.
+  // --- sources: the model is instructed not to output this field at all —
+  // app/api/generate/route.ts overwrites it after parsing with sources
+  // built from Gemini's own groundingMetadata (structured API data, not a
+  // model claim). This parses parsed.sources anyway as a defensive
+  // fallback in case that override is ever skipped, same filtering tier as
+  // everything else — never the hard-throw tier.
   const seenSourceUrls = new Set<string>();
   const sources: Source[] = (Array.isArray(parsed.sources) ? parsed.sources : [])
     .filter(

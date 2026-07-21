@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Sparkles, Target, ShieldCheck } from "lucide-react";
+import { Check, Globe2, Sparkles, ShieldCheck } from "lucide-react";
 import type { ScoreCriterionLabel } from "@/lib/types";
 import { SCORE_CRITERION_ICONS, REPORT_STEPS } from "@/lib/report-icons";
 import { useReport } from "@/lib/report-context";
@@ -11,19 +11,24 @@ import { Footer } from "@/components/Footer";
 import { VerdictGauge, TONE_COLOR, tierForScore } from "@/components/report/Snapshot";
 import type { ValidationReport } from "@/lib/types";
 
-// No web search in the current generation path (see HANDOFF.md) — a single
-// model call, so these steps are shorter and more evenly weighted than the
-// old search-heavy timing.
+// Search grounding is back on (2026-07-22, see HANDOFF.md) — searching is
+// genuinely the longest phase again, so it gets most of the runway instead
+// of the progress bar sitting frozen on the last step. Durations are
+// carried over from the last time this app had Claude+search (measured
+// ~130s for that path) as a reasonable placeholder — not yet re-measured
+// for Gemini+grounding specifically (blocked on free-tier quota exhaustion
+// while building this; see HANDOFF.md). Tighten once real timing is known.
 const GENERATION_STEPS = [
-  { label: "Reading your idea", durationMs: 2000 },
-  { label: "Scoring 8 factors", durationMs: 8000 },
+  { label: "Reading your idea", durationMs: 3000 },
+  { label: "Searching the web for real data", durationMs: 130000 },
+  { label: "Scoring 8 factors", durationMs: 15000 },
   { label: "Building your report", durationMs: Infinity },
 ];
 
 const TRUST_BADGES = [
   { icon: ShieldCheck, label: "No login required" },
+  { icon: Globe2, label: "Grounded with live web search" },
   { icon: Sparkles, label: "Powered by AI" },
-  { icon: Target, label: "8-factor scoring" },
 ];
 
 // Fixed sample data for the hero preview — never generated, never claimed to

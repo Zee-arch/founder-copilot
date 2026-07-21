@@ -237,6 +237,87 @@ overload is not a one-off blip; treat it as the current normal** until
 proven otherwise. If report generation feels unreliable for users right
 now, this is why — not a regression to chase.
 
+**2026-07-22: Web search grounding restored — deliberately staying on
+Gemini, not reverting to Claude.** Grounding was only ever turned off to
+cut costs while iterating (2026-07-21 entry above), never a quality call,
+and the founder flagged it as the single biggest gap versus every serious
+competitor in this market. Researched both options before deciding:
+
+- **Google Search grounding on Gemini** (chosen): 5,000 free grounded
+  prompts/month, then $14/1,000
+  ([source](https://www.metacto.com/blogs/the-true-cost-of-google-gemini-a-guide-to-api-pricing-and-integration)).
+  At this app's actual volume (single digits to low tens of generations/day
+  under the 8 req/hour/IP limit), 5,000/month is effectively unlimited —
+  stays genuinely free during the iteration phase, which was the whole
+  point of last week's swap.
+- **Reverting to Claude's `web_search`** (rejected, for now): no free
+  tier — $10 per 1,000 searches
+  ([source](https://www.finout.io/blog/anthropic-api-pricing)) plus Sonnet
+  4.6 tokens at $3/$15 per million
+  ([source](https://www.cloudzero.com/blog/claude-api-pricing/)). Reverting
+  would directly undo the cost problem the founder explicitly asked to
+  solve one message earlier — he asked to close the grounding gap, not to
+  resume spending. Revisit this choice once the product is
+  feature-complete, per the founder's own stated plan (see "Immediate next
+  steps").
+
+**Real implementation cost of staying on Gemini, found via Google's own
+docs, not guessed**: the `googleSearch` tool **cannot be combined with
+`responseMimeType: "application/json"`** — confirmed against Google's
+API docs and a GitHub issue on `googleapis/python-genai` (tool use and
+native JSON mode are mutually exclusive on this API, full stop, not a
+config quirk to work around). `app/api/generate/route.ts` now omits
+`responseMimeType` when `tools` is present, falling back to the prompt's
+own "return ONLY valid JSON" instruction plus `lib/parse-report.ts`'s
+existing `extractJson()` fence/brace-matching — the exact mechanism the
+original Claude+search version always used, so this isn't a new risk
+class, just giving up the JSON-mode reliability boost gained during the
+few days grounding was off.
+
+**Sources are now built from Gemini's own `groundingMetadata`, not from
+asking the model to self-report a `sources` field** — a deliberate
+improvement over how the original Claude version worked. Claude's version
+had the model write its own `sources: [{label, url}]` inside its JSON
+response, trusted only as far as "the model claims this is a real URL."
+Gemini's `response.candidates[0].groundingMetadata.groundingChunks[].web`
+is structured data the API itself returns for pages it actually
+retrieved — a stronger guarantee. `extractGroundingSources()` in
+`route.ts` builds `Source[]` from that directly; the model is now told
+**not** to output a `sources` field in its JSON at all
+(`lib/prompt.ts`). `lib/parse-report.ts` and `lib/types.ts` needed no
+structural changes — `Source`/`sources` were never removed from the
+schema even while grounding was off, only the comments were reworded (see
+2026-07-21 entry); this restoration just rewords them back and route.ts
+now populates the field a different way than before.
+
+Restored the landing page's honest badges/copy that were correctly
+toned down when grounding went off: "Grounded with live web search" badge
+back (`components/LandingPage.tsx`), Footer's "grounded in live web
+search" line back (`components/Footer.tsx`), and the multi-step loading
+indicator's "Searching the web for real data" step back with its ~130s
+weight — reused from the last time this app had Claude+search rather than
+invented, but **not yet re-measured for Gemini+grounding specifically**
+(see below for why).
+
+**Not yet live-verified — this is the real gap, be upfront about it.**
+Implementation is typechecked, and the request path was confirmed live up
+to the point of calling Gemini (submitting the form with the new
+`tools: [{googleSearch: {}}]` config correctly reached the API and
+surfaced a real `429` quota error cleanly, no crash) — but **no
+successful grounded generation has been seen**, because today's
+Gemini free-tier quota was already exhausted by the earlier testing in
+this same session (confirmed via a standalone script:
+`429 RESOURCE_EXHAUSTED`). That means none of the following are verified
+yet: whether the model reliably still returns valid JSON without native
+JSON mode, whether `groundingChunks` actually populates the way Google's
+docs describe, whether the Sources panel renders correctly with real
+data, and — the founder's own requested check — whether the returned
+source URLs are real pages, not hallucinated. **Founder: once your quota
+resets (check `ai.dev/rate-limit`), run one real generation and open a
+couple of the Sources panel links yourself** before treating this as
+done, the same way the original Claude+search grounding was verified
+before being trusted.
+
 ## Architecture
 
 - Next.js 15 (App Router), TypeScript, Tailwind v4 (CSS-first config in
@@ -304,18 +385,23 @@ now, this is why — not a regression to chase.
   longer than a couple of animation frames), so html2canvas sometimes
   captured stale/mid-transition DOM and threw. Rendering everything
   off-screen up front sidesteps the race entirely.
-- **Historical, currently inactive (as of 2026-07-21):** the route used to
-  call Claude with a `web_search_20260318` tool (`allowed_callers:
+- **Historical — Claude's web_search implementation, not currently in use
+  but kept for reference.** Before the 2026-07-21 Gemini swap, the route
+  called Claude with a `web_search_20260318` tool (`allowed_callers:
   ["direct"]` to skip a slow dynamic-filtering path — 8 minutes vs. ~2-3
   for a single report), `max_uses: 4`, `maxDuration = 280`, and
   concatenated every `text` content block in the response (web search's
   citation mechanism could split the JSON output across several blocks —
   keeping only the first silently truncated it on some requests). All of
-  this was removed, not just disabled, when the route switched to Gemini
-  with search off — see the 2026-07-21 status log entry for why and what
-  it was replaced with. Kept here so re-adding search grounding later
-  (to Claude, Gemini, or otherwise) doesn't require rediscovering these
-  gotchas from scratch.
+  it was removed, not disabled, when the route switched to Gemini. As of
+  2026-07-22 grounding is back on **Gemini's own `googleSearch` tool
+  instead** (see status log) — a different mechanism with different
+  gotchas (no `responseMimeType` + tools, sources from `groundingMetadata`
+  not model self-report), not a restoration of this exact Claude code.
+  Kept here in case Claude's web_search is ever revisited for real (the
+  founder's own plan is to re-compare providers once the product is
+  feature-complete) — don't rediscover `allowed_callers`/`max_uses`/the
+  multi-block truncation bug from scratch if that happens.
 
 ## Accounts (Supabase) — Stage 1 & 2
 
@@ -396,11 +482,18 @@ now, this is why — not a regression to chase.
 
 - **Model**: `gemini-3.5-flash` via `@google/genai`, as of 2026-07-21 — a
   deliberate, temporary, cost-driven swap off Claude while iterating on
-  features (see status log). Web search grounding is off. Verify the model
-  name is still current/free-tier before assuming it (check
+  features (see status log). **Web search grounding is back on as of
+  2026-07-22** via Gemini's own `googleSearch` tool (5,000 free grounded
+  prompts/month — see that status log entry for the full pricing
+  comparison against reverting to Claude). Verify the model name is still
+  current/free-tier before assuming it (check
   ai.google.dev/gemini-api/docs/pricing), and don't assume this is the
   final provider choice — the founder wants to re-compare Claude/Gemini/
   others on actual output quality once the product is feature-complete.
+  Because `googleSearch` and `responseMimeType: "application/json"` can't
+  be combined, the route no longer uses native JSON mode — it relies on
+  the prompt instruction + `parse-report.ts`'s defensive parser, same as
+  the original Claude version always did.
 - **Rate limiting** (`lib/rate-limit.ts`): in-memory, per-IP, 8 req/hour.
   Deliberately basic — fine for friends testing, NOT durable on serverless
   (resets on cold start) or across multiple instances. If this gets real
@@ -420,8 +513,10 @@ now, this is why — not a regression to chase.
   same API that added support for it. Don't swap back to `html2canvas`
   without re-testing PDF export.
 - **Market sizing (TAM/SAM/SOM), financials, and roadmap figures** are
-  the model's own labeled estimates, not verified data (more so than ever
-  now that web search is off — see status log). The prompt explicitly
+  the model's own labeled estimates, not verified data — even with web
+  search grounding back on (2026-07-22), these are still framed as
+  estimates, not sourced facts; grounding informs the number, it doesn't
+  certify it. The prompt explicitly
   forbids fabricating false-precision numbers. Keep the "(estimate)"
   framing in the UI — don't let it drift into looking like sourced data.
 - **Competitor profiles are qualitative only** — name, one-line description,
@@ -478,6 +573,16 @@ persistence-while-signed-in still works with the real Gemini response
 shape (untested — both real runs were signed out; see the Stage 2 item
 just above, which is still open).
 
+As of 2026-07-22 (grounding restored): **entirely unverified** — typechecked
+and the request path confirmed live up to a real `429` (today's free-tier
+quota was already exhausted by earlier testing this same session), but no
+successful grounded generation has been seen. Unknown: whether JSON
+parsing still works reliably without native JSON mode, whether
+`groundingChunks` populates as documented, whether the Sources panel
+renders correctly, and whether the source URLs are real (not
+hallucinated) — the founder's own requested check. See the 2026-07-22
+status log entry for exactly what to verify once quota resets.
+
 ## Competitive benchmark
 
 The founder is comparing this against **ideaproof.io**, a competing idea
@@ -494,39 +599,50 @@ it's wanted.
 
 ## Immediate next steps (discussed, not yet done)
 
-1. ~~Add `GEMINI_API_KEY` to Vercel's env vars~~ **Done — deployed and
-   verified live on production as of 2026-07-21/22.** Everything in this
-   session (Stage 2, Gemini swap, both bugfixes) is merged to `main` and
-   confirmed working on `founder-copilot-flame.vercel.app`, including a
-   real end-to-end generation. See the "deploy + live verification"
-   status log entry for the full story.
-2. **Founder: verify Stage 2 signed-in path for real** (see "What's
+1. **Founder: verify search grounding for real, once Gemini quota resets**
+   — this is the most important open item. Run a real generation, confirm
+   it still produces valid JSON reliably (no more native JSON mode — see
+   the 2026-07-22 status log entry), open a few Sources panel links
+   yourself to confirm they're real pages, and push/merge/deploy once
+   satisfied (this hasn't been pushed yet — still local, same mistake as
+   last time is avoidable this time: push and merge before considering it
+   done, don't just commit locally).
+2. ~~Add `GEMINI_API_KEY` to Vercel's env vars~~ **Done — deployed and
+   verified live on production as of 2026-07-21/22** (before grounding was
+   restored). Everything through the Gemini swap + both bugfixes is
+   merged to `main` and confirmed working on
+   `founder-copilot-flame.vercel.app`. Grounding itself (item 1 above) is
+   not deployed yet.
+3. **Founder: verify Stage 2 signed-in path for real** (see "What's
    untested" above) — code is written and typechecked, one real
    generation has been verified signed-out, but the persist → dashboard →
    reopen loop while signed in has not run with a real session.
-3. The four utility ideas discussed but not started: standalone
+4. The four utility ideas discussed but not started: standalone
    calculators (LTV/CAC/break-even/runway), a "recalculate with your
    numbers" override on financials, an interactive milestone checklist on
    Roadmap, and a risk-matrix visualization for the stop signals. Now that
    `/dashboard` exists, these can be built dashboard-native as originally
    planned.
-4. Possibly upgrade PDF export to real selectable text.
-5. Harden rate limiting before any wider traffic. A real successful
-   generation took **124 seconds** (Gemini free tier is currently
-   overloaded — see status log), slower than hoped even without search;
-   re-check whether 8 req/hour still makes sense given that. The in-memory
-   rate limiter (`lib/rate-limit.ts`) resets on every Vercel serverless
-   cold start — live, not hypothetical, now that this is actually deployed.
-6. Mobile-width visual check for the report journey + marketing pages —
+5. Possibly upgrade PDF export to real selectable text.
+6. Harden rate limiting before any wider traffic. A real successful
+   generation took **124 seconds** without grounding (Gemini free tier is
+   currently overloaded — see status log) — likely longer now that
+   grounding adds its own round trip; re-check whether 8 req/hour still
+   makes sense given that once real timing is known. The in-memory rate
+   limiter (`lib/rate-limit.ts`) resets on every Vercel serverless cold
+   start — live, not hypothetical, now that this is actually deployed.
+7. Mobile-width visual check for the report journey + marketing pages —
    not yet done by an AI or the founder.
-7. Fill in the real name on the MIT `LICENSE` file if it ever needs to
+8. Fill in the real name on the MIT `LICENSE` file if it ever needs to
    change (currently "Zaeem Ather").
-8. **Once the product is feature-complete, re-compare LLM providers**
+9. **Once the product is feature-complete, re-compare LLM providers**
    (Claude vs. Gemini vs. others) on actual output quality for this exact
    prompt/JSON contract, and decide for real — the Gemini swap was a
-   cost-saving move during development, not a quality judgment. Revisit
-   whether web search grounding comes back too.
-9. **Strategic pivot (2026-07-18):** the founder wants to step back from
+   cost-saving move during development, not a quality judgment. Grounding
+   is back (2026-07-22) on Gemini's own tool, not Claude's — factor real
+   quality/reliability comparisons of both grounding mechanisms into that
+   future decision, not just base model quality.
+10. **Strategic pivot (2026-07-18):** the founder wants to step back from
    feature-by-feature execution and think about product direction more
    holistically before continuing — where the product needs to reach,
    working backward from there, and how to use AI more deeply in the
