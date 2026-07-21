@@ -178,7 +178,16 @@ export default function LandingPage() {
         body: JSON.stringify({ idea: idea.trim() }),
       });
 
-      const data = (await response.json()) as { report?: ValidationReport; error?: string };
+      // A platform-level failure (e.g. the function exceeding maxDuration)
+      // returns a plain-text/HTML error page, not our JSON shape — parse
+      // defensively so that shows a real message instead of a raw
+      // "Unexpected token" crash from response.json() itself.
+      let data: { report?: ValidationReport; error?: string };
+      try {
+        data = await response.json();
+      } catch {
+        throw new Error("The server took too long to respond. Please try again.");
+      }
 
       if (!response.ok) {
         throw new Error(data.error ?? "Failed to generate report.");
