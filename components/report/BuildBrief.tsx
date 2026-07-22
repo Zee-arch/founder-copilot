@@ -22,7 +22,7 @@ function CopyButton({ text }: { text: string }) {
     <button
       type="button"
       onClick={handleCopy}
-      className="inline-flex items-center gap-1.5 rounded-full border border-ink-border bg-ink-surface px-3 py-1.5 text-xs font-medium text-ink-text transition hover:border-brand/40"
+      className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-ink-border bg-ink-surface px-3 py-1.5 text-xs font-medium text-ink-text transition hover:border-brand/40"
     >
       {copied ? <Check className="h-3.5 w-3.5 text-signal-go" /> : <Copy className="h-3.5 w-3.5" />}
       {copied ? "Copied" : "Copy prompt"}
@@ -71,7 +71,7 @@ export function BuildBrief({ buildBrief }: { buildBrief: BuildBriefData }) {
       </div>
 
       <div className="rounded-2xl border border-ink-border bg-ink-surface p-6">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2">
             <Terminal className="h-4 w-4 text-ink-muted" />
             <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-muted">

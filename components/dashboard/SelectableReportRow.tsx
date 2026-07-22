@@ -30,7 +30,7 @@ export function SelectableReportRow({
       onClick={onToggle}
       disabled={disabled}
       aria-pressed={selected}
-      className={`flex w-full items-center justify-between gap-4 rounded-2xl border p-5 text-left shadow-sm transition ${
+      className={`flex w-full flex-col gap-3 rounded-2xl border p-5 text-left shadow-sm transition sm:flex-row sm:items-center sm:justify-between sm:gap-4 ${
         selected ? "border-brand bg-brand/5" : "border-slate-200 bg-white"
       } ${disabled ? "cursor-not-allowed opacity-50" : "hover:border-brand/40"}`}
     >

@@ -637,6 +637,82 @@ perfectly) — worth a real click-through once the founder's signed-in
 session is available, same as the still-open Stage 2 verification item
 above.
 
+**2026-07-22 (same day): mobile-width audit — the founder's explicit
+instruction was "mobile width has never been checked, by an AI or the
+founder, on any route," and to look before fixing, not do a blind
+"add responsive classes" pass.** Opened every route in a real browser
+session at a real 375px viewport (not a resized desktop window) and
+screenshotted each one before touching any code. Six real issues found,
+all fixed:
+
+1. **`SiteHeader`** — "Home / How It Works / About" plus "Log in / Sign
+   up" wrapped onto their own row below `sm`, eating over a third of a
+   375px screen before any page content. Fixed with a real hamburger
+   menu: split into `AuthSection` (compact mode below `sm`, showing only
+   the single primary action) and a new `MobileAuthLinks` dropdown that
+   holds what compact mode drops, so nothing is actually lost, just
+   relocated. Needed a `useSessionUser()` hook lifted to the top of the
+   file so the compact row and the dropdown agree on signed-in state
+   without duplicating the Supabase session fetch.
+2. **Report step nav (`app/report/layout.tsx`) and Full Report jump-nav
+   (`components/report/FullReport.tsx`)** — both are `overflow-x-auto`
+   pill rows that already scrolled to reveal items past the visible
+   width (Competitors/Validate/Build Brief/Full Report sit off-screen at
+   375px), but had zero visual hint that they scroll at all — looked
+   like a cut-off, static row. Fixed with a right-edge gradient-fade
+   overlay plus scrollbar-hiding (`[scrollbar-width:none]
+   [&::-webkit-scrollbar]:hidden`, since Tailwind v4 has no built-in
+   `scrollbar-none` utility). Same pattern applied to both, independently
+   — no shared component, since one is inside a client layout and the
+   other a plain function component.
+3. **Radar charts (`Snapshot.tsx`, `ReportComparison.tsx`)** — multi-word
+   factor labels ("Competitive Advantage," "Capital Efficiency,"
+   "Regulatory Ease") got clipped by their own container at 375px.
+   Shrinking `outerRadius` alone wasn't the real fix — even at 55-58%,
+   long labels still overflowed. The actual fix was a shared word-wrapping
+   tick renderer, new `components/RadarAngleTick.tsx` (typed against
+   recharts' `BaseTickContentProps`), which puts each word of a label on
+   its own `<tspan>` line. `outerRadius`/margin were then tightened
+   (Snapshot: 58%, ReportComparison: 55%) after re-verifying visually —
+   fixing the real cause (label width) instead of chasing it by shrinking
+   the chart indefinitely.
+4. **`BuildBrief.tsx`** — the starter-prompt panel's header row
+   (label + copy button) used a plain `justify-between`, pushing the copy
+   button hard against the right edge with the label text touching it at
+   375px. Changed to stack (`flex-col items-start gap-3`) below `sm`,
+   row above; copy button got `shrink-0 whitespace-nowrap` so its label
+   never wraps mid-word.
+5. **`ReportCard.tsx` / `SelectableReportRow.tsx` (dashboard rows)** — the
+   most severe issue found: `items-center justify-between` with no wrap
+   meant the idea text, score, and verdict badge all fought for space on
+   one row, actually overflowing the card's right edge at 375px (visually
+   confirmed, not just suspected). Fixed the same way for both: stack
+   (`flex-col gap-3`) below `sm`, row above (`sm:flex-row sm:items-center
+   sm:justify-between sm:gap-4`). `ReportCard.tsx`'s `onClick`/`handleOpen`
+   logic was left byte-identical — confirmed via `git diff` — per the
+   still-standing "don't change how a single report is opened" constraint
+   from the comparison-mode work above; this was a pure layout/CSS fix.
+6. Confirmed the sticky "Idea analyzed" banner, Snapshot's verdict gauge
+   (already had `flex-col sm:flex-row` from the Phase-1 polish pass), and
+   the landing page hero needed no changes — already correct at 375px.
+
+**Verified, not assumed**: every fix was visually re-checked at 375px
+after the change (not just "the classes look right"), then a desktop
+(1280x800) regression pass confirmed none of the six broke non-mobile
+layouts — re-seeded a full mock `ValidationReport` into
+`sessionStorage` (the same key/shape `lib/report-context.tsx` reads,
+`{idea, report}`) to drive the report journey without spending Gemini
+quota, screenshotted Summary/Full Report/Build Brief at desktop width,
+and confirmed via `git diff` that every mobile fix is a pure additive
+`sm:`-prefixed variant — the pre-existing desktop-width classes are
+unchanged, so there was no real regression risk to begin with, only
+confirmation. Typechecked and linted clean
+(`npx tsc --noEmit`, `npx eslint`). One unrelated hiccup along the way:
+an `rm -rf .next` run out of habit while the dev server was still live
+corrupted its running module cache (`MODULE_NOT_FOUND`,
+`ENOENT: routes-manifest.json`) — not a code regression, fixed by
+restarting the dev server.
+
 ## Architecture
 
 - Next.js 15 (App Router), TypeScript, Tailwind v4 (CSS-first config in

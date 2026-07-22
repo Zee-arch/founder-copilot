@@ -1,18 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import {
-  Radar,
-  RadarChart,
-  PolarGrid,
-  PolarAngleAxis,
-  PolarRadiusAxis,
-  ResponsiveContainer,
-} from "recharts";
+import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer } from "recharts";
 import { ExternalLink, Minus, Plus } from "lucide-react";
 import type { MarketSizing, ScoreCriterion, Source, Verdict } from "@/lib/types";
 import { SCORE_CRITERION_ICONS, VERDICT_ICONS } from "@/lib/report-icons";
 import { TONE_COLOR, TONE_DIM, VERDICT_TONE, tierForScore } from "@/lib/verdict-tone";
+import { RadarAngleTick } from "@/components/RadarAngleTick";
 
 // `enabled: false` skips the rAF loop entirely and just shows the final
 // value — used when rendering off-screen for PDF export, where html2canvas
@@ -122,12 +116,9 @@ function ScoreRadar({ scores }: { scores: ScoreCriterion[] }) {
 
   return (
     <ResponsiveContainer width="100%" height={300}>
-      <RadarChart data={data} outerRadius="72%">
+      <RadarChart data={data} outerRadius="58%" margin={{ top: 16, right: 24, bottom: 16, left: 24 }}>
         <PolarGrid stroke="var(--color-ink-border)" />
-        <PolarAngleAxis
-          dataKey="label"
-          tick={{ fill: "var(--color-ink-muted)", fontSize: 10, fontFamily: "var(--font-mono)" }}
-        />
+        <PolarAngleAxis dataKey="label" tick={RadarAngleTick} />
         <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
         <Radar
           dataKey="score"

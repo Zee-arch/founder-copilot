@@ -5,6 +5,7 @@ import { ArrowLeft, X } from "lucide-react";
 import { SCORE_CRITERIA } from "@/lib/types";
 import { VERDICT_ICONS } from "@/lib/report-icons";
 import { TONE_COLOR, TONE_DIM, VERDICT_TONE } from "@/lib/verdict-tone";
+import { RadarAngleTick } from "@/components/RadarAngleTick";
 import type { ReportRow } from "@/components/dashboard/DashboardReports";
 
 // Distinct per-report identity colors — deliberately NOT the go/refine/pivot
@@ -89,12 +90,9 @@ export function ReportComparison({
         </p>
 
         <ResponsiveContainer width="100%" height={360}>
-          <RadarChart data={radarData} outerRadius="70%">
+          <RadarChart data={radarData} outerRadius="55%" margin={{ top: 16, right: 24, bottom: 16, left: 24 }}>
             <PolarGrid stroke="var(--color-ink-border)" />
-            <PolarAngleAxis
-              dataKey="label"
-              tick={{ fill: "var(--color-ink-muted)", fontSize: 10, fontFamily: "var(--font-mono)" }}
-            />
+            <PolarAngleAxis dataKey="label" tick={RadarAngleTick} />
             <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
             {rows.map((row, i) => (
               <Radar

@@ -30,7 +30,7 @@ export function ReportCard({
     <button
       type="button"
       onClick={handleOpen}
-      className="group flex w-full items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:border-brand/40 hover:shadow-md"
+      className="group flex w-full flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:border-brand/40 hover:shadow-md sm:flex-row sm:items-center sm:justify-between sm:gap-4"
     >
       <div className="min-w-0 flex-1">
         <p className="truncate font-display text-base text-slate-text">{idea}</p>
