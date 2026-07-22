@@ -8,21 +8,30 @@ function sectionId(title: string) {
 export function FullReport({ sections }: { sections: ReportSection[] }) {
   return (
     <div className="space-y-4 rounded-3xl border border-slate-200 bg-paper p-6 sm:p-8">
-      <nav className="sticky top-2 z-10 mb-2 flex gap-1.5 overflow-x-auto rounded-full border border-slate-200 bg-white p-1.5 shadow-sm">
-        {sections.map((section) => {
-          const Icon = REPORT_SECTION_ICONS[section.title];
-          return (
-            <a
-              key={section.title}
-              href={`#${sectionId(section.title)}`}
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
-            >
-              <Icon className="h-3 w-3" />
-              {section.title}
-            </a>
-          );
-        })}
-      </nav>
+      {/* Same fix as app/report/layout.tsx's step nav — this scrolls to
+          reveal all 10 sections on a real 375px viewport but had no visual
+          hint that it scrolls. */}
+      <div className="sticky top-2 z-10 mb-2">
+        <nav className="flex gap-1.5 overflow-x-auto rounded-full border border-slate-200 bg-white p-1.5 shadow-sm [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {sections.map((section) => {
+            const Icon = REPORT_SECTION_ICONS[section.title];
+            return (
+              <a
+                key={section.title}
+                href={`#${sectionId(section.title)}`}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
+              >
+                <Icon className="h-3 w-3" />
+                {section.title}
+              </a>
+            );
+          })}
+        </nav>
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-y-0 right-0 w-8 rounded-r-full bg-gradient-to-l from-white to-transparent"
+        />
+      </div>
 
       {sections.map((section, index) => {
         const Icon = REPORT_SECTION_ICONS[section.title];

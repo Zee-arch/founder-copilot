@@ -1,43 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import {
-  Radar,
-  RadarChart,
-  PolarGrid,
-  PolarAngleAxis,
-  PolarRadiusAxis,
-  ResponsiveContainer,
-} from "recharts";
+import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer } from "recharts";
 import { ExternalLink, Minus, Plus } from "lucide-react";
 import type { MarketSizing, ScoreCriterion, Source, Verdict } from "@/lib/types";
 import { SCORE_CRITERION_ICONS, VERDICT_ICONS } from "@/lib/report-icons";
-
-export type Tone = "go" | "refine" | "pivot";
-
-export function tierForScore(score: number): Tone {
-  if (score >= 70) return "go";
-  if (score >= 45) return "refine";
-  return "pivot";
-}
-
-export const TONE_COLOR: Record<Tone, string> = {
-  go: "var(--color-signal-go)",
-  refine: "var(--color-signal-refine)",
-  pivot: "var(--color-signal-pivot)",
-};
-
-const TONE_DIM: Record<Tone, string> = {
-  go: "var(--color-signal-go-dim)",
-  refine: "var(--color-signal-refine-dim)",
-  pivot: "var(--color-signal-pivot-dim)",
-};
-
-const VERDICT_TONE: Record<Verdict, Tone> = {
-  GO: "go",
-  REFINE: "refine",
-  PIVOT: "pivot",
-};
+import { TONE_COLOR, TONE_DIM, VERDICT_TONE, tierForScore } from "@/lib/verdict-tone";
+import { RadarAngleTick } from "@/components/RadarAngleTick";
 
 // `enabled: false` skips the rAF loop entirely and just shows the final
 // value — used when rendering off-screen for PDF export, where html2canvas
@@ -147,12 +116,9 @@ function ScoreRadar({ scores }: { scores: ScoreCriterion[] }) {
 
   return (
     <ResponsiveContainer width="100%" height={300}>
-      <RadarChart data={data} outerRadius="72%">
+      <RadarChart data={data} outerRadius="58%" margin={{ top: 16, right: 24, bottom: 16, left: 24 }}>
         <PolarGrid stroke="var(--color-ink-border)" />
-        <PolarAngleAxis
-          dataKey="label"
-          tick={{ fill: "var(--color-ink-muted)", fontSize: 10, fontFamily: "var(--font-mono)" }}
-        />
+        <PolarAngleAxis dataKey="label" tick={RadarAngleTick} />
         <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
         <Radar
           dataKey="score"

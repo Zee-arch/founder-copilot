@@ -1,4 +1,4 @@
-import { GoogleGenAI } from "@google/genai";
+import OpenAI from "openai";
 import { buildValidationUserPrompt, VALIDATION_SYSTEM_PROMPT } from "@/lib/prompt";
 import { parseValidationReport } from "@/lib/parse-report";
 import { checkRateLimit } from "@/lib/rate-limit";
@@ -6,25 +6,32 @@ import { createClient } from "@/lib/supabase/server";
 
 const MAX_IDEA_LENGTH = 500;
 
-// No web search in this generation path (see HANDOFF.md), but Gemini's free
-// tier is currently overloaded often enough that a single call can itself
-// take 60-80s before failing with 503 (measured live, not hypothetical).
-// 150 was tried first and genuinely too low — a real production request
-// (one retry included) got killed by Vercel mid-flight, returning a plain
-// non-JSON error page instead of ours. 280 was already proven safe on this
-// project's Vercel plan for the old Claude+search path, so reuse that
-// known-good ceiling rather than guess a new number a second time.
-export const maxDuration = 280;
+// 2026-07-22 (later still): swapped Gemini for Groq — purely a testing-
+// reliability decision, not a quality one (see HANDOFF.md). Groq's free
+// tier (14,400 req/day, 30 req/min, no billing card) has been consistently
+// available where Gemini's free tier was returning 503 "high demand" on a
+// majority of attempts. Groq's LPU inference is also fast — a real
+// generation is expected in low single-digit seconds, not the 60-80s+
+// stalls measured under Gemini load — so `maxDuration` comes down from 280
+// accordingly. Revisit before launch: the founder still wants to compare
+// providers on actual output quality once the product is feature-complete,
+// same open decision as before this swap.
+export const maxDuration = 60;
 
-// Gemini's free tier genuinely returns 503 "high demand" fairly often right
-// now — confirmed live while testing this integration. The API's own error
-// message says spikes are "usually temporary," so retry once with backoff
-// before giving up; anything else (bad key, quota exhausted, malformed
-// request) fails immediately. Only one retry, not several: a single attempt
-// has been observed taking up to ~80s on its own while overloaded, so each
-// extra retry meaningfully eats into `maxDuration`.
+// Groq's free tier for this model has a real 8,000-token-per-minute cap
+// (confirmed live via a standalone diagnostic script, not documentation —
+// Groq's docs don't surface the exact per-model number). This app's system
+// prompt alone is ~3,000 tokens, so a single generation can leave very
+// little headroom for a same-minute second request; a 429 here more often
+// means "wait for the TPM window to refill" than "try again right away."
+// One retry, but the backoff below is driven by Groq's own `retry-after`
+// response header (present on real 429s, confirmed live) rather than a
+// fixed guess — that header told us to wait anywhere from ~6s to ~17s
+// during testing, which a flat 2s backoff would not have covered.
 const MAX_MODEL_RETRIES = 1;
-const RETRY_BACKOFF_MS = 2000;
+const FALLBACK_RETRY_BACKOFF_MS = 2000;
+// Guards against a header value large enough to blow past `maxDuration`.
+const MAX_RETRY_BACKOFF_MS = 30000;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -38,21 +45,35 @@ function getApiErrorStatus(error: unknown): number | undefined {
 }
 
 function isRetryableStatus(error: unknown): boolean {
-  return getApiErrorStatus(error) === 503;
+  const status = getApiErrorStatus(error);
+  return status === 429 || status === 503;
 }
 
-// The Gemini SDK's error `.message` is the raw API response body (a JSON
-// string) — readable in server logs, but showing that to a founder in the
-// UI is neither friendly nor honest about what actually went wrong.
+function getRetryBackoffMs(error: unknown, attempt: number): number {
+  if (typeof error === "object" && error !== null && "headers" in error) {
+    const headers = (error as { headers?: unknown }).headers;
+    if (headers instanceof Headers) {
+      const retryAfter = Number(headers.get("retry-after"));
+      if (Number.isFinite(retryAfter) && retryAfter > 0) {
+        return Math.min(retryAfter * 1000, MAX_RETRY_BACKOFF_MS);
+      }
+    }
+  }
+  return FALLBACK_RETRY_BACKOFF_MS * attempt;
+}
+
+// The OpenAI SDK's error `.message` is the raw API response body — readable
+// in server logs, but showing that to a founder in the UI is neither
+// friendly nor honest about what actually went wrong.
 function friendlyErrorMessage(error: unknown): string {
   const status = getApiErrorStatus(error);
 
-  if (status === 503) {
-    return "The AI model is experiencing high demand right now. Please wait a moment and try again.";
+  if (status === 429) {
+    return "The free API rate limit was hit. Please wait a few seconds and try again.";
   }
 
-  if (status === 429) {
-    return "The free API quota has been used up for now. Try again later, or check your Gemini API plan.";
+  if (status === 503) {
+    return "The AI model is temporarily unavailable. Please wait a moment and try again.";
   }
 
   return error instanceof Error ? error.message : "Something went wrong while generating your report.";
@@ -95,53 +116,84 @@ export async function POST(request: Request) {
       );
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.GROQ_API_KEY;
 
     if (!apiKey) {
       return Response.json(
         {
-          error: "Gemini API key is missing. Add GEMINI_API_KEY to your .env.local file and restart the server.",
+          error: "Groq API key is missing. Add GROQ_API_KEY to your .env.local file and restart the server.",
         },
         { status: 500 },
       );
     }
 
-    const ai = new GoogleGenAI({ apiKey });
+    const client = new OpenAI({ apiKey, baseURL: "https://api.groq.com/openai/v1" });
 
     const generateStart = Date.now();
 
-    let response;
+    let completion;
     let attempt = 0;
 
     while (true) {
       try {
-        response = await ai.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: buildValidationUserPrompt(idea),
-          config: {
-            systemInstruction: VALIDATION_SYSTEM_PROMPT,
-            temperature: 0.7,
-            responseMimeType: "application/json",
-          },
-        });
+        completion = await client.chat.completions.create({
+          model: "openai/gpt-oss-120b",
+          messages: [
+            { role: "system", content: VALIDATION_SYSTEM_PROMPT },
+            { role: "user", content: buildValidationUserPrompt(idea) },
+          ],
+          temperature: 0.7,
+          response_format: { type: "json_object" },
+          // gpt-oss-120b is a reasoning model — without this, it was
+          // measured spending ~800 of its ~3,000-token completion budget on
+          // hidden reasoning before writing any JSON, then hitting the
+          // token cap mid-report (buildBrief, the last field in the shape,
+          // came back empty). "low" cut reasoning to ~30-60 tokens and let
+          // real generations finish with finish_reason "stop" instead of
+          // "length" across repeated live tests. Confirmed live, not from
+          // Groq's docs — this parameter isn't part of the OpenAI SDK's
+          // types, hence the cast below.
+          reasoning_effort: "low",
+        } as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming);
         break;
       } catch (error) {
         if (attempt >= MAX_MODEL_RETRIES || !isRetryableStatus(error)) throw error;
+        const backoffMs = getRetryBackoffMs(error, attempt + 1);
         attempt += 1;
-        console.log(`[generate] Gemini returned 503 (high demand), retry ${attempt}/${MAX_MODEL_RETRIES}`);
-        await sleep(RETRY_BACKOFF_MS * attempt);
+        console.log(
+          `[generate] Groq returned ${getApiErrorStatus(error)}, retry ${attempt}/${MAX_MODEL_RETRIES} after ${backoffMs}ms`,
+        );
+        await sleep(backoffMs);
       }
     }
 
-    console.log(`[generate] ${Date.now() - generateStart}ms, model=gemini-3.5-flash, retries=${attempt}`);
+    console.log(`[generate] ${Date.now() - generateStart}ms, model=openai/gpt-oss-120b, retries=${attempt}`);
 
-    const text = response.text ?? "";
+    // A truncated-but-still-valid-JSON response (the model hit its token
+    // cap mid-report) isn't a hard failure — lib/parse-report.ts already
+    // falls back gracefully per field — but it's worth knowing about if it
+    // keeps happening, since it means a real field the founder sees is
+    // silently thinner than the model could have produced.
+    if (completion.choices[0]?.finish_reason === "length") {
+      console.warn("[generate] completion hit the token cap (finish_reason=length) — report may have missing fields");
+    }
+
+    const text = completion.choices[0]?.message?.content ?? "";
 
     if (!text.trim()) {
       return Response.json({ error: "The model returned an empty response." }, { status: 500 });
     }
 
-    const report = parseValidationReport(text);
+    // No search grounding on this provider (see HANDOFF.md) — always an
+    // empty sources array, same "no web access" tier the prompt now
+    // instructs the model to write for. Never self-reported by the model:
+    // an open-weight model with no live web access has no way to produce a
+    // real URL, only a plausible-looking one, which is exactly the kind of
+    // fabrication this project's "never fabricate, stay strict on honesty"
+    // rule exists to block.
+    const report = parseValidationReport(text, []);
+
+    console.log(`[generate] category=${report.category}`);
 
     // Best-effort save for signed-in users — generation already succeeded,
     // so a persistence failure (RLS misconfig, transient DB error, etc.)

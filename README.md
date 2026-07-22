@@ -8,21 +8,23 @@
 
 ## What it does
 
-Type a startup idea in one sentence. FounderCopilot scores it across 8 independent factors with an LLM, then generates a 5-part report:
+Type a startup idea in one sentence. FounderCopilot scores it across 8 independent factors with an LLM, then generates a 7-part report:
 
 | Step | What's in it |
 |---|---|
 | **Summary** | Overall score + verdict, radar chart of the 8 factors, TAM/SAM/SOM, go/stop signals |
 | **Financials** | Startup cost, break-even estimate, CAC/LTV, LTV:CAC ratio, revenue streams |
 | **Roadmap** | MVP timeline, phased milestones (Validate → Build → Launch → Distribute), quick wins |
-| **Competitors** | Named competitors with qualitative strengths/weaknesses |
+| **Competitors** | Named competitors with qualitative strengths/weaknesses, plus sourced funding/valuation/user-count figures when a real citation backs them |
+| **Validate** | A customer interview guide, cold outreach email drafts, and pre-sell landing copy — starting drafts for validating with real people, not just AI |
+| **Build Brief** | Suggested MVP scope, a reasoned (not default) tech stack, and a paste-ready starter prompt for Claude Code/Cursor — a brief, not generated code |
 | **Full Report** | 10-section prose write-up (market, ICP, SWOT, GTM, risks, and more) |
 
 Each step has its own URL, the whole report exports to a PDF, and there's no login or account required.
 
 ## A design principle that shaped the engineering
 
-The overall score isn't a black box: it's **computed in application code from the 8 individual factor scores**, never trusted directly from the model. Market sizing, financials, and competitor figures are always labeled as estimates rather than dressed up to look like verified data — and competitor profiles are deliberately qualitative-only (no funding/valuation/user-count figures), since a language model can't verify numbers like that are current. That constraint shaped several implementation decisions below.
+The overall score isn't a black box: it's **computed in application code from the 8 individual factor scores**, never trusted directly from the model. Market sizing and financials are always labeled as estimates rather than dressed up to look like verified data. Competitor profiles are qualitative-only — the current model has no live web access, so a funding, valuation, or user-count figure is never requested or rendered; when search grounding is enabled (the app has run with it before), an unsourced or invented figure is still structurally impossible to render, cross-checked in code against a real retrieved source, not just discouraged by a prompt. That constraint shaped several implementation decisions below.
 
 ## Notable engineering decisions
 
@@ -33,7 +35,7 @@ The overall score isn't a black box: it's **computed in application code from th
 
 ## Tech stack
 
-Next.js 15 (App Router) · TypeScript · Tailwind CSS v4 · Recharts · Google Gemini API · Supabase (auth) · jsPDF + html2canvas-pro · lucide-react
+Next.js 15 (App Router) · TypeScript · Tailwind CSS v4 · Recharts · Groq API (OpenAI-compatible) · Supabase (auth) · jsPDF + html2canvas-pro · lucide-react
 
 ## Getting started
 
@@ -41,7 +43,7 @@ Next.js 15 (App Router) · TypeScript · Tailwind CSS v4 · Recharts · Google G
 git clone https://github.com/zee-arch/founder-copilot.git
 cd founder-copilot
 npm install
-cp .env.local.example .env.local   # add your GEMINI_API_KEY (+ Supabase keys)
+cp .env.local.example .env.local   # add your GROQ_API_KEY (+ Supabase keys)
 npm run dev
 ```
 

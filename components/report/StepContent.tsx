@@ -5,6 +5,8 @@ import { Snapshot } from "@/components/report/Snapshot";
 import { Financials } from "@/components/report/Financials";
 import { Roadmap } from "@/components/report/Roadmap";
 import { CompetitiveLandscape } from "@/components/report/CompetitiveLandscape";
+import { CustomerValidation } from "@/components/report/CustomerValidation";
+import { BuildBrief } from "@/components/report/BuildBrief";
 import { FullReport } from "@/components/report/FullReport";
 
 export function ReportStepContent({
@@ -37,6 +39,10 @@ export function ReportStepContent({
       return <Roadmap roadmap={report.roadmap} />;
     case "competitors":
       return <CompetitiveLandscape competitive={report.competitive} />;
+    case "validate":
+      return <CustomerValidation customerValidation={report.customerValidation} />;
+    case "build":
+      return <BuildBrief buildBrief={report.buildBrief} />;
     case "full":
       return <FullReport sections={report.sections} />;
     default:

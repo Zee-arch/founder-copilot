@@ -1,22 +1,27 @@
 import {
+  IDEA_CATEGORIES,
   MILESTONE_PHASES,
   REPORT_SECTION_TITLES,
   SCORE_CRITERIA,
+  type BuildBrief,
   type Competitor,
   type CompetitiveLandscape,
+  type CustomerValidation,
   type Financials,
+  type IdeaCategory,
   type MarketSizing,
   type Milestone,
   type MilestonePhase,
+  type OutreachEmail,
   type Roadmap,
   type RevenueStream,
   type ScoreCriterion,
   type Source,
+  type SourcedFigure,
+  type TechStackChoice,
   type ValidationReport,
   type Verdict,
 } from "@/lib/types";
-
-const HTTP_URL_PATTERN = /^https?:\/\//i;
 
 function extractJson(text: string) {
   const trimmed = text.trim();
@@ -57,9 +62,21 @@ function str(value: unknown, fallback = "Not estimated"): string {
 type RawScore = { label?: unknown; score?: unknown; note?: unknown };
 type RawRevenueStream = { name?: unknown; description?: unknown };
 type RawMilestone = { title?: unknown; phase?: unknown; timeframe?: unknown };
-type RawCompetitor = { name?: unknown; description?: unknown; strength?: unknown; weakness?: unknown };
+type RawOutreachEmail = { subject?: unknown; body?: unknown };
+type RawTechStackChoice = { layer?: unknown; choice?: unknown; reason?: unknown };
+type RawSourcedFigure = { value?: unknown; url?: unknown };
+type RawCompetitor = {
+  name?: unknown;
+  description?: unknown;
+  strength?: unknown;
+  weakness?: unknown;
+  funding?: RawSourcedFigure;
+  valuation?: RawSourcedFigure;
+  userCount?: RawSourcedFigure;
+};
 type RawJson = {
   headline?: unknown;
+  category?: unknown;
   scores?: RawScore[];
   market?: { tam?: unknown; sam?: unknown; som?: unknown; cagr?: unknown };
   goSignals?: unknown[];
@@ -75,13 +92,40 @@ type RawJson = {
   };
   roadmap?: { mvpTimeline?: unknown; milestones?: RawMilestone[]; quickWins?: unknown[] };
   competitive?: { competitors?: RawCompetitor[]; yourEdge?: unknown };
-  sources?: RawSource[];
+  customerValidation?: {
+    interviewQuestions?: unknown[];
+    outreachEmails?: RawOutreachEmail[];
+    landingPageCopy?: unknown;
+  };
+  buildBrief?: {
+    mvpScope?: unknown;
+    techStack?: RawTechStackChoice[];
+    starterPrompt?: unknown;
+  };
 };
 
-type RawSource = { label?: unknown; url?: unknown };
+// A competitor figure is only ever accepted if its claimed URL exactly
+// matches one of this session's real grounding sources — the model self-
+// reports which URL backs a figure (it has to; only it knows which search
+// result supports which specific claim), but the URL itself is verified
+// against real API data, not trusted on its word. The label shown in the
+// UI always comes from the verified Source (real page title), never from
+// anything the model wrote about the figure — same "never fabricate, fall
+// back gracefully" tier as market sizing, not the hard-throw tier
+// scores/sections use: a bad or missing figure just omits that field.
+function resolveSourcedFigure(raw: RawSourcedFigure | undefined, sourceByUrl: Map<string, Source>): SourcedFigure | undefined {
+  if (!raw || typeof raw.value !== "string" || !raw.value.trim()) return undefined;
+  if (typeof raw.url !== "string") return undefined;
 
-export function parseValidationReport(text: string): ValidationReport {
+  const source = sourceByUrl.get(raw.url.trim());
+  if (!source) return undefined;
+
+  return { value: raw.value.trim(), source };
+}
+
+export function parseValidationReport(text: string, groundedSources: Source[]): ValidationReport {
   const parsed = JSON.parse(extractJson(text)) as RawJson;
+  const sourceByUrl = new Map(groundedSources.map((s) => [s.url, s]));
 
   // --- sections (unchanged shape from v1) ---
   if (!Array.isArray(parsed.sections) || parsed.sections.length !== REPORT_SECTION_TITLES.length) {
@@ -161,18 +205,29 @@ export function parseValidationReport(text: string): ValidationReport {
     quickWins,
   };
 
-  // --- competitive landscape: qualitative only, no fabricated stats ---
+  // --- competitive landscape: qualitative fields always fall back gracefully;
+  // funding/valuation/userCount are only attached when resolveSourcedFigure
+  // confirms a real grounded source backs them (see helper above) ---
   const competitors: Competitor[] = (
     Array.isArray(parsed.competitive?.competitors) ? parsed.competitive.competitors : []
   )
     .filter((c): c is RawCompetitor => typeof c?.name === "string" && c.name.trim().length > 0)
     .slice(0, 5)
-    .map((c) => ({
-      name: str(c.name),
-      description: str(c.description, ""),
-      strength: str(c.strength, ""),
-      weakness: str(c.weakness, ""),
-    }));
+    .map((c) => {
+      const funding = resolveSourcedFigure(c.funding, sourceByUrl);
+      const valuation = resolveSourcedFigure(c.valuation, sourceByUrl);
+      const userCount = resolveSourcedFigure(c.userCount, sourceByUrl);
+
+      return {
+        name: str(c.name),
+        description: str(c.description, ""),
+        strength: str(c.strength, ""),
+        weakness: str(c.weakness, ""),
+        ...(funding && { funding }),
+        ...(valuation && { valuation }),
+        ...(userCount && { userCount }),
+      };
+    });
 
   const competitive: CompetitiveLandscape = {
     competitors,
@@ -193,29 +248,66 @@ export function parseValidationReport(text: string): ValidationReport {
       ? parsed.headline.trim()
       : "Validation report generated.";
 
-  // --- sources: no web search in the current generation path (see
-  // HANDOFF.md), so the model is instructed to always return an empty
-  // array. Still filtered defensively rather than trusted, same as
-  // everything else — never the hard-throw tier — in case that changes.
-  const seenSourceUrls = new Set<string>();
-  const sources: Source[] = (Array.isArray(parsed.sources) ? parsed.sources : [])
-    .filter(
-      (s): s is RawSource =>
-        typeof s?.label === "string" &&
-        s.label.trim().length > 0 &&
-        typeof s?.url === "string" &&
-        HTTP_URL_PATTERN.test(s.url.trim()),
-    )
-    .map((s) => ({ label: str(s.label), url: (s.url as string).trim() }))
-    .filter((s) => {
-      if (seenSourceUrls.has(s.url)) return false;
-      seenSourceUrls.add(s.url);
-      return true;
-    })
+  // --- customer validation: same graceful, never-fabricate tier as
+  // financials/roadmap — the honesty constraint here (no invented stats or
+  // testimonials) is enforced in the prompt, not structurally checkable in
+  // code the way sourced competitor figures are, since there's no URL to
+  // cross-check a claim inside free-form email/landing copy against.
+  const interviewQuestions = (
+    Array.isArray(parsed.customerValidation?.interviewQuestions) ? parsed.customerValidation.interviewQuestions : []
+  )
+    .filter((q): q is string => typeof q === "string" && q.trim().length > 0)
     .slice(0, 8);
+
+  const outreachEmails: OutreachEmail[] = (
+    Array.isArray(parsed.customerValidation?.outreachEmails) ? parsed.customerValidation.outreachEmails : []
+  )
+    .filter(
+      (e): e is RawOutreachEmail =>
+        typeof e?.subject === "string" && e.subject.trim().length > 0 && typeof e?.body === "string" && e.body.trim().length > 0,
+    )
+    .slice(0, 3)
+    .map((e) => ({ subject: str(e.subject), body: str(e.body) }));
+
+  const customerValidation: CustomerValidation = {
+    interviewQuestions,
+    outreachEmails,
+    landingPageCopy: str(parsed.customerValidation?.landingPageCopy, "Not enough information to draft pre-sell copy."),
+  };
+
+  // --- build brief: same graceful tier as customer validation above — a
+  // brief, not a build, so nothing here is structurally verifiable the way
+  // sourced competitor figures are; trust is at the prompt level. layer is
+  // deliberately free text (not clamped to a fixed set like milestone
+  // phase) since what an idea needs varies too much for a rigid taxonomy.
+  const techStack: TechStackChoice[] = (
+    Array.isArray(parsed.buildBrief?.techStack) ? parsed.buildBrief.techStack : []
+  )
+    .filter(
+      (t): t is RawTechStackChoice =>
+        typeof t?.layer === "string" && t.layer.trim().length > 0 && typeof t?.choice === "string" && t.choice.trim().length > 0,
+    )
+    .slice(0, 6)
+    .map((t) => ({ layer: str(t.layer), choice: str(t.choice), reason: str(t.reason, "") }));
+
+  const buildBrief: BuildBrief = {
+    mvpScope: str(parsed.buildBrief?.mvpScope, "Not enough information to suggest an MVP scope."),
+    techStack,
+    starterPrompt: str(parsed.buildBrief?.starterPrompt, "Not enough information to draft a starter prompt."),
+  };
+
+  // --- category: informational, steers the model's own emphasis (see
+  // lib/prompt.ts) — never trusted to gate or restructure anything in code,
+  // so an invalid/missing value just falls back to the no-special-emphasis
+  // default rather than throwing, same tier as milestone phase above.
+  const ideaCategories = new Set<string>(IDEA_CATEGORIES);
+  const category: IdeaCategory = (
+    typeof parsed.category === "string" && ideaCategories.has(parsed.category) ? parsed.category : "General"
+  ) as IdeaCategory;
 
   return {
     headline,
+    category,
     scores,
     market,
     goSignals,
@@ -224,7 +316,9 @@ export function parseValidationReport(text: string): ValidationReport {
     financials,
     roadmap,
     competitive,
-    sources,
+    customerValidation,
+    buildBrief,
+    sources: groundedSources,
     overallScore,
     verdict,
   };

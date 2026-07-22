@@ -5,26 +5,7 @@ import { ArrowRight } from "lucide-react";
 import type { ValidationReport } from "@/lib/types";
 import { VERDICT_ICONS } from "@/lib/report-icons";
 import { useReport } from "@/lib/report-context";
-
-type Tone = "go" | "refine" | "pivot";
-
-const VERDICT_TONE: Record<ValidationReport["verdict"], Tone> = {
-  GO: "go",
-  REFINE: "refine",
-  PIVOT: "pivot",
-};
-
-const TONE_COLOR: Record<Tone, string> = {
-  go: "var(--color-signal-go)",
-  refine: "var(--color-signal-refine)",
-  pivot: "var(--color-signal-pivot)",
-};
-
-const TONE_DIM: Record<Tone, string> = {
-  go: "var(--color-signal-go-dim)",
-  refine: "var(--color-signal-refine-dim)",
-  pivot: "var(--color-signal-pivot-dim)",
-};
+import { TONE_COLOR, TONE_DIM, VERDICT_TONE } from "@/lib/verdict-tone";
 
 export function ReportCard({
   idea,
@@ -49,7 +30,7 @@ export function ReportCard({
     <button
       type="button"
       onClick={handleOpen}
-      className="group flex w-full items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:border-brand/40 hover:shadow-md"
+      className="group flex w-full flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:border-brand/40 hover:shadow-md sm:flex-row sm:items-center sm:justify-between sm:gap-4"
     >
       <div className="min-w-0 flex-1">
         <p className="truncate font-display text-base text-slate-text">{idea}</p>

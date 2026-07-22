@@ -2,28 +2,31 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Sparkles, Target, ShieldCheck } from "lucide-react";
+import { Check, Sparkles, ShieldCheck } from "lucide-react";
 import type { ScoreCriterionLabel } from "@/lib/types";
 import { SCORE_CRITERION_ICONS, REPORT_STEPS } from "@/lib/report-icons";
 import { useReport } from "@/lib/report-context";
 import { SiteHeader } from "@/components/SiteHeader";
 import { Footer } from "@/components/Footer";
-import { VerdictGauge, TONE_COLOR, tierForScore } from "@/components/report/Snapshot";
+import { VerdictGauge } from "@/components/report/Snapshot";
+import { TONE_COLOR, tierForScore } from "@/lib/verdict-tone";
 import type { ValidationReport } from "@/lib/types";
 
-// No web search in the current generation path (see HANDOFF.md) — a single
-// model call, so these steps are shorter and more evenly weighted than the
-// old search-heavy timing.
+// Swapped to Groq for generation (2026-07-22, see HANDOFF.md) — no search
+// grounding on this provider, and Groq's inference is fast (expect low
+// single-digit seconds), so this drops the ~130s "searching" phase entirely
+// rather than leaving a step that lies about what's happening. Not yet
+// precisely re-measured against a real Groq call — tighten once real
+// timing is known, same as the note this replaces.
 const GENERATION_STEPS = [
   { label: "Reading your idea", durationMs: 2000 },
-  { label: "Scoring 8 factors", durationMs: 8000 },
+  { label: "Scoring 8 factors", durationMs: 4000 },
   { label: "Building your report", durationMs: Infinity },
 ];
 
 const TRUST_BADGES = [
   { icon: ShieldCheck, label: "No login required" },
   { icon: Sparkles, label: "Powered by AI" },
-  { icon: Target, label: "8-factor scoring" },
 ];
 
 // Fixed sample data for the hero preview — never generated, never claimed to
@@ -41,6 +44,8 @@ const WHAT_YOU_GET: Record<(typeof REPORT_STEPS)[number]["key"], string> = {
   financials: "Startup cost, break-even, CAC/LTV, revenue streams",
   roadmap: "MVP timeline, milestones, quick wins",
   competitors: "Named competitors and your edge over them",
+  validate: "Interview questions, outreach drafts, and pre-sell copy",
+  build: "MVP scope, tech stack, and a paste-ready AI coding prompt",
   full: "The complete prose report, exportable as a PDF",
 };
 
@@ -81,7 +86,7 @@ function ReportPreviewCard() {
 
 function WhatYouGetStrip() {
   return (
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
       {REPORT_STEPS.map((step) => {
         const Icon = step.icon;
         return (
