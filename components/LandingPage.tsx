@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Globe2, Sparkles, ShieldCheck } from "lucide-react";
+import { Check, Sparkles, ShieldCheck } from "lucide-react";
 import type { ScoreCriterionLabel } from "@/lib/types";
 import { SCORE_CRITERION_ICONS, REPORT_STEPS } from "@/lib/report-icons";
 import { useReport } from "@/lib/report-context";
@@ -12,23 +12,20 @@ import { VerdictGauge } from "@/components/report/Snapshot";
 import { TONE_COLOR, tierForScore } from "@/lib/verdict-tone";
 import type { ValidationReport } from "@/lib/types";
 
-// Search grounding is back on (2026-07-22, see HANDOFF.md) — searching is
-// genuinely the longest phase again, so it gets most of the runway instead
-// of the progress bar sitting frozen on the last step. Durations are
-// carried over from the last time this app had Claude+search (measured
-// ~130s for that path) as a reasonable placeholder — not yet re-measured
-// for Gemini+grounding specifically (blocked on free-tier quota exhaustion
-// while building this; see HANDOFF.md). Tighten once real timing is known.
+// Swapped to Groq for generation (2026-07-22, see HANDOFF.md) — no search
+// grounding on this provider, and Groq's inference is fast (expect low
+// single-digit seconds), so this drops the ~130s "searching" phase entirely
+// rather than leaving a step that lies about what's happening. Not yet
+// precisely re-measured against a real Groq call — tighten once real
+// timing is known, same as the note this replaces.
 const GENERATION_STEPS = [
-  { label: "Reading your idea", durationMs: 3000 },
-  { label: "Searching the web for real data", durationMs: 130000 },
-  { label: "Scoring 8 factors", durationMs: 15000 },
+  { label: "Reading your idea", durationMs: 2000 },
+  { label: "Scoring 8 factors", durationMs: 4000 },
   { label: "Building your report", durationMs: Infinity },
 ];
 
 const TRUST_BADGES = [
   { icon: ShieldCheck, label: "No login required" },
-  { icon: Globe2, label: "Grounded with live web search" },
   { icon: Sparkles, label: "Powered by AI" },
 ];
 

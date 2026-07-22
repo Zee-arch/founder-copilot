@@ -1,42 +1,29 @@
-import { GoogleGenAI } from "@google/genai";
+import OpenAI from "openai";
 import { buildValidationUserPrompt, VALIDATION_SYSTEM_PROMPT } from "@/lib/prompt";
 import { parseValidationReport } from "@/lib/parse-report";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { createClient } from "@/lib/supabase/server";
-import type { Source } from "@/lib/types";
 
 const MAX_IDEA_LENGTH = 500;
 
-// Search grounding is back on (2026-07-22, see HANDOFF.md) — was off for a
-// few days purely to cut costs while iterating, restored because it was the
-// single biggest quality/competitive gap. Was already 280 for the old
-// Claude+search path and stayed 280 through the brief no-search window
-// (proven safe on this Vercel plan either way) — grounding adds real
-// latency on top of Gemini's free tier already being prone to 60-80s+
-// stalls under load (measured live), so this needs the same headroom as
-// before, not less.
-export const maxDuration = 280;
+// 2026-07-22 (later still): swapped Gemini for Groq — purely a testing-
+// reliability decision, not a quality one (see HANDOFF.md). Groq's free
+// tier (14,400 req/day, 30 req/min, no billing card) has been consistently
+// available where Gemini's free tier was returning 503 "high demand" on a
+// majority of attempts. Groq's LPU inference is also fast — a real
+// generation is expected in low single-digit seconds, not the 60-80s+
+// stalls measured under Gemini load — so `maxDuration` comes down from 280
+// accordingly. Revisit before launch: the founder still wants to compare
+// providers on actual output quality once the product is feature-complete,
+// same open decision as before this swap.
+export const maxDuration = 60;
 
-// Gemini's free tier genuinely returns 503 "high demand" fairly often right
-// now — confirmed live while testing this integration. The API's own error
-// message says spikes are "usually temporary," so retry once with backoff
-// before giving up; anything else (bad key, quota exhausted, malformed
-// request) fails immediately. Only one retry, not several: a single attempt
-// has been observed taking up to ~80s on its own while overloaded, so each
-// extra retry meaningfully eats into `maxDuration` — more so now that
-// grounding adds its own latency on top.
+// Groq's free tier is far more available than Gemini's was, but still has
+// a real 30 req/min ceiling that a quick round of manual testing could
+// realistically hit — worth one retry with backoff rather than failing
+// immediately, same reasoning as the Gemini 503 retry this replaces.
 const MAX_MODEL_RETRIES = 1;
 const RETRY_BACKOFF_MS = 2000;
-
-// Google's googleSearch tool cannot be combined with responseMimeType:
-// "application/json" (confirmed against Google's own docs/issue tracker —
-// tool use and native JSON mode are mutually exclusive on this API). So
-// this relies on the prompt's own "return ONLY valid JSON" instruction
-// plus lib/parse-report.ts's existing defensive extractJson() fence/brace
-// matching, the same mechanism the original Claude+search version always
-// used. Not a new risk class, just giving up the JSON-mode reliability
-// boost gained during the brief no-search window.
-const GROUNDING_TOOL = { googleSearch: {} };
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -50,52 +37,25 @@ function getApiErrorStatus(error: unknown): number | undefined {
 }
 
 function isRetryableStatus(error: unknown): boolean {
-  return getApiErrorStatus(error) === 503;
+  const status = getApiErrorStatus(error);
+  return status === 429 || status === 503;
 }
 
-// The Gemini SDK's error `.message` is the raw API response body (a JSON
-// string) — readable in server logs, but showing that to a founder in the
-// UI is neither friendly nor honest about what actually went wrong.
+// The OpenAI SDK's error `.message` is the raw API response body — readable
+// in server logs, but showing that to a founder in the UI is neither
+// friendly nor honest about what actually went wrong.
 function friendlyErrorMessage(error: unknown): string {
   const status = getApiErrorStatus(error);
 
-  if (status === 503) {
-    return "The AI model is experiencing high demand right now. Please wait a moment and try again.";
+  if (status === 429) {
+    return "The free API rate limit was hit. Please wait a few seconds and try again.";
   }
 
-  if (status === 429) {
-    return "The free API quota has been used up for now. Try again later, or check your Gemini API plan.";
+  if (status === 503) {
+    return "The AI model is temporarily unavailable. Please wait a moment and try again.";
   }
 
   return error instanceof Error ? error.message : "Something went wrong while generating your report.";
-}
-
-// Sources come from Gemini's own groundingMetadata, not from asking the
-// model to self-report a "sources" field in its JSON — groundingChunks are
-// structured data the API actually returned for pages it really retrieved,
-// which is a stronger guarantee than trusting the model's own claim (which
-// is all the original Claude version had, since Claude self-reports
-// sources inside its JSON response instead). Same defensive filtering tier
-// as everything else in lib/parse-report.ts: never hard-throws on missing
-// or malformed grounding data.
-const HTTP_URL_PATTERN = /^https?:\/\//i;
-
-function extractGroundingSources(response: Awaited<ReturnType<GoogleGenAI["models"]["generateContent"]>>): Source[] {
-  const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];
-  const seen = new Set<string>();
-
-  return chunks
-    .map((chunk) => ({ url: chunk.web?.uri?.trim(), label: chunk.web?.title?.trim() }))
-    .filter(
-      (s): s is { url: string; label: string } =>
-        typeof s.url === "string" && HTTP_URL_PATTERN.test(s.url) && typeof s.label === "string" && s.label.length > 0,
-    )
-    .filter((s) => {
-      if (seen.has(s.url)) return false;
-      seen.add(s.url);
-      return true;
-    })
-    .slice(0, 8);
 }
 
 function getClientIp(request: Request): string {
@@ -135,57 +95,60 @@ export async function POST(request: Request) {
       );
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.GROQ_API_KEY;
 
     if (!apiKey) {
       return Response.json(
         {
-          error: "Gemini API key is missing. Add GEMINI_API_KEY to your .env.local file and restart the server.",
+          error: "Groq API key is missing. Add GROQ_API_KEY to your .env.local file and restart the server.",
         },
         { status: 500 },
       );
     }
 
-    const ai = new GoogleGenAI({ apiKey });
+    const client = new OpenAI({ apiKey, baseURL: "https://api.groq.com/openai/v1" });
 
     const generateStart = Date.now();
 
-    let response;
+    let completion;
     let attempt = 0;
 
     while (true) {
       try {
-        response = await ai.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: buildValidationUserPrompt(idea),
-          config: {
-            systemInstruction: VALIDATION_SYSTEM_PROMPT,
-            temperature: 0.7,
-            tools: [GROUNDING_TOOL],
-          },
+        completion = await client.chat.completions.create({
+          model: "openai/gpt-oss-120b",
+          messages: [
+            { role: "system", content: VALIDATION_SYSTEM_PROMPT },
+            { role: "user", content: buildValidationUserPrompt(idea) },
+          ],
+          temperature: 0.7,
+          response_format: { type: "json_object" },
         });
         break;
       } catch (error) {
         if (attempt >= MAX_MODEL_RETRIES || !isRetryableStatus(error)) throw error;
         attempt += 1;
-        console.log(`[generate] Gemini returned 503 (high demand), retry ${attempt}/${MAX_MODEL_RETRIES}`);
+        console.log(`[generate] Groq returned ${getApiErrorStatus(error)}, retry ${attempt}/${MAX_MODEL_RETRIES}`);
         await sleep(RETRY_BACKOFF_MS * attempt);
       }
     }
 
-    const sources = extractGroundingSources(response);
+    console.log(`[generate] ${Date.now() - generateStart}ms, model=openai/gpt-oss-120b, retries=${attempt}`);
 
-    console.log(
-      `[generate] ${Date.now() - generateStart}ms, model=gemini-3.5-flash, retries=${attempt}, sources=${sources.length}`,
-    );
-
-    const text = response.text ?? "";
+    const text = completion.choices[0]?.message?.content ?? "";
 
     if (!text.trim()) {
       return Response.json({ error: "The model returned an empty response." }, { status: 500 });
     }
 
-    const report = parseValidationReport(text, sources);
+    // No search grounding on this provider (see HANDOFF.md) — always an
+    // empty sources array, same "no web access" tier the prompt now
+    // instructs the model to write for. Never self-reported by the model:
+    // an open-weight model with no live web access has no way to produce a
+    // real URL, only a plausible-looking one, which is exactly the kind of
+    // fabrication this project's "never fabricate, stay strict on honesty"
+    // rule exists to block.
+    const report = parseValidationReport(text, []);
 
     console.log(`[generate] category=${report.category}`);
 

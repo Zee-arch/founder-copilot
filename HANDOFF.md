@@ -713,6 +713,102 @@ corrupted its running module cache (`MODULE_NOT_FOUND`,
 `ENOENT: routes-manifest.json`) — not a code regression, fixed by
 restarting the dev server.
 
+**2026-07-22 (same day, later still): swapped generation from Gemini to
+Groq — a testing-reliability decision, not a quality one.** Gemini's free
+tier had become genuinely unusable for iterating on this product: the
+2026-07-21/22 status entries above already documented persistent `503`
+"high demand" errors and 60-80s+ stalls, and current published Gemini
+free-tier limits (10-15 requests/minute, 250-1,000 requests/day depending
+on model) make that worse, not better, for a founder who just wants to
+click Generate repeatedly while testing. The founder now has a Groq API
+key; Groq's free tier is far more generous (14,400 requests/day, 30
+requests/minute, no billing card) and Groq's LPU inference is fast enough
+that report generation is expected to take low single-digit seconds
+instead of a minute-plus. **Explicit decision, not yet final**: the
+founder still wants to compare providers (Claude included) on actual
+output quality once the product is feature-complete — this is a
+"get testing unblocked" swap, same spirit as the earlier Claude→Gemini
+swap, not a launch decision.
+
+`app/api/generate/route.ts` now uses the `openai` SDK pointed at Groq's
+OpenAI-compatible endpoint (`baseURL: "https://api.groq.com/openai/v1"`)
+instead of `@google/genai` — swapped the dependency outright (`npm
+uninstall @google/genai && npm install openai`), not layered alongside
+it. Model is `openai/gpt-oss-120b` (Groq's own current recommendation for
+structured-output tasks; `llama-3.3-70b-versatile` is being deprecated).
+JSON is requested via `response_format: { type: "json_object" }` — plain
+JSON-object mode, not a hand-authored JSON Schema — consistent with how
+Gemini's `responseMimeType: "application/json"` was used before: rely on
+the prompt's detailed shape instructions plus `lib/parse-report.ts`'s
+existing defensive parsing, which was already written to never trust the
+raw shape regardless of provider. Retry logic carried over the same
+shape (one retry with backoff on a retryable status) but now covers both
+`429` and `503` — Groq's daily cap is generous enough that a `429` here
+more plausibly means "hit the 30 req/min ceiling momentarily" than
+"quota exhausted for the day," unlike Gemini's stricter free tier.
+`maxDuration` dropped from 280 to 60, sized for Groq's expected speed
+rather than reusing Gemini's proven-safe-but-much-higher ceiling.
+
+**No search grounding on this provider — an open-weight model behind
+Groq has no live web access, so this isn't a config flag, it's a real
+capability gap.** Handled the same way this project always handles a
+capability it doesn't actually have: honestly, not silently.
+`lib/prompt.ts` now tells the model plainly it has no web access and
+must label every figure as an estimate; the rule barring a specific
+regulation/statute citation is now unconditional instead of
+grounding-gated; the instruction to attach a sourced `funding`/
+`valuation`/`userCount` figure to a competitor was removed entirely
+(a model with no web access has no way to back one with a real URL, and
+the JSON shape's example that showed a sample sourced figure was removed
+too, so nothing in the prompt models a pattern the app can't honor
+anymore). `route.ts` always calls `parseValidationReport(text, [])` — an
+empty sources array — rather than asking the model to self-report
+sources, since a self-reported URL from a model with no web access is a
+plausible-looking fabrication, not a citation; the existing
+`resolveSourcedFigure` check in `lib/parse-report.ts` already requires a
+competitor figure's URL to match a real entry in the sources array, so
+this is structurally consistent with, not a new exception to, that
+existing safety net.
+
+Every UI claim that depended on grounding being on was updated to match,
+same "stay strict on data honesty" rule this project has enforced at
+every provider swap so far: `components/LandingPage.tsx`'s "Grounded
+with live web search" trust badge removed (`Globe2` import removed too,
+now unused), and its `GENERATION_STEPS` multi-step loader dropped the
+~130s "Searching the web for real data" phase entirely rather than leave
+a step describing something that no longer happens.
+`components/Footer.tsx`'s honesty disclaimer no longer says "grounded in
+live web search." `README.md`'s tech stack line, setup instructions, and
+the "data honesty" section's competitor-sourcing claim were all updated
+to reflect Groq + no grounding (the sourced-figure structural-safety
+claim is now phrased as "this app has run with grounding before, and
+when it's on again, this is how sourced figures are structurally
+verified" rather than describing something currently active).
+`app/how-it-works/page.tsx` needed no change — it already described
+estimates generically, never claimed grounding by name.
+
+New env var: `GROQ_API_KEY` replaces `GEMINI_API_KEY` — updated in
+`.env.local.example`, **not** written into the founder's real
+`.env.local` by Claude (API keys are never entered by AI, per this
+project's own established policy — see the earlier Vercel-key note
+above). The founder still needs to add the real key locally (and later
+to Vercel, once/if this becomes the launch provider) before generation
+will actually succeed.
+
+**Verified without spending the founder's real Groq quota on this
+specific check**: typechecked and linted clean after the swap. Started
+the dev server with no `GROQ_API_KEY` set (deliberately, to check the
+failure path rather than skip it) and confirmed the homepage renders
+correctly with the grounding badge gone, then submitted a real idea
+through the UI and confirmed the friendly, provider-correct error
+surfaced end-to-end: "Groq API key is missing. Add GROQ_API_KEY to your
+`.env.local` file and restart the server." **Not yet verified**: an
+actual successful Groq generation — blocked on the founder adding their
+real key locally, which is the very next step. Once that's done, worth
+a real click-through the same way every other provider swap in this
+project has been (real idea in, full report out, not just "the request
+didn't error").
+
 ## Architecture
 
 - Next.js 15 (App Router), TypeScript, Tailwind v4 (CSS-first config in

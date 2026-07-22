@@ -175,7 +175,7 @@ export type ValidationReport = {
   competitive: CompetitiveLandscape;
   customerValidation: CustomerValidation;
   buildBrief: BuildBrief;
-  sources: Source[]; // real pages retrieved via Gemini's Google Search grounding (see route.ts)
+  sources: Source[]; // real pages retrieved via search grounding when a provider supports it — currently always empty, see HANDOFF.md
   // Computed in code from `scores` — never trusted from the model directly,
   // so the number on screen always matches the math behind it.
   overallScore: number;
