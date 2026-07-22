@@ -8,7 +8,8 @@ import { SCORE_CRITERION_ICONS, REPORT_STEPS } from "@/lib/report-icons";
 import { useReport } from "@/lib/report-context";
 import { SiteHeader } from "@/components/SiteHeader";
 import { Footer } from "@/components/Footer";
-import { VerdictGauge, TONE_COLOR, tierForScore } from "@/components/report/Snapshot";
+import { VerdictGauge } from "@/components/report/Snapshot";
+import { TONE_COLOR, tierForScore } from "@/lib/verdict-tone";
 import type { ValidationReport } from "@/lib/types";
 
 // Search grounding is back on (2026-07-22, see HANDOFF.md) — searching is

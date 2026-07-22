@@ -4,19 +4,11 @@ import { redirect } from "next/navigation";
 import { FolderOpen } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { SiteHeader } from "@/components/SiteHeader";
-import { ReportCard } from "@/components/dashboard/ReportCard";
-import type { ValidationReport } from "@/lib/types";
+import { DashboardReports, type ReportRow } from "@/components/dashboard/DashboardReports";
 
 export const metadata: Metadata = {
   title: "Dashboard — FounderCopilot",
   description: "Your saved startup idea validation reports.",
-};
-
-type ReportRow = {
-  id: string;
-  idea: string;
-  report: ValidationReport;
-  created_at: string;
 };
 
 export default async function DashboardPage() {
@@ -65,13 +57,7 @@ export default async function DashboardPage() {
           </div>
         )}
 
-        {!error && rows.length > 0 && (
-          <div className="mt-8 grid gap-3">
-            {rows.map((row) => (
-              <ReportCard key={row.id} idea={row.idea} report={row.report} createdAt={row.created_at} />
-            ))}
-          </div>
-        )}
+        {!error && rows.length > 0 && <DashboardReports rows={rows} />}
       </main>
     </div>
   );

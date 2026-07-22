@@ -12,32 +12,7 @@ import {
 import { ExternalLink, Minus, Plus } from "lucide-react";
 import type { MarketSizing, ScoreCriterion, Source, Verdict } from "@/lib/types";
 import { SCORE_CRITERION_ICONS, VERDICT_ICONS } from "@/lib/report-icons";
-
-export type Tone = "go" | "refine" | "pivot";
-
-export function tierForScore(score: number): Tone {
-  if (score >= 70) return "go";
-  if (score >= 45) return "refine";
-  return "pivot";
-}
-
-export const TONE_COLOR: Record<Tone, string> = {
-  go: "var(--color-signal-go)",
-  refine: "var(--color-signal-refine)",
-  pivot: "var(--color-signal-pivot)",
-};
-
-const TONE_DIM: Record<Tone, string> = {
-  go: "var(--color-signal-go-dim)",
-  refine: "var(--color-signal-refine-dim)",
-  pivot: "var(--color-signal-pivot-dim)",
-};
-
-const VERDICT_TONE: Record<Verdict, Tone> = {
-  GO: "go",
-  REFINE: "refine",
-  PIVOT: "pivot",
-};
+import { TONE_COLOR, TONE_DIM, VERDICT_TONE, tierForScore } from "@/lib/verdict-tone";
 
 // `enabled: false` skips the rAF loop entirely and just shows the final
 // value — used when rendering off-screen for PDF export, where html2canvas

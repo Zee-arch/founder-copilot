@@ -563,6 +563,80 @@ Four features deep on PR #6 now, all sharing one blocker — worth
 resetting quota and checking all four in one pass rather than one at a
 time.
 
+**2026-07-22 (same day): dashboard comparison mode + sort/filter — the
+first of today's five features that needed zero Gemini calls to verify,
+and actually got fully verified.** Framed by the founder as the feature
+that makes "companies use this instead of a consultant" real: one founder
+validating one idea doesn't need comparison, a team evaluating several
+proposals does. Pulls entirely from data already in the `reports` table —
+`overallScore`/`verdict`/`scores`/`headline` are all already on the stored
+`ValidationReport`, so this needed zero backend, schema, or Supabase query
+changes. Purely new dashboard UI over existing data.
+
+**The founder's constraint — "don't change how a single report is
+opened" — was treated as load-bearing, not a suggestion.**
+`components/dashboard/ReportCard.tsx` (the component whose `onClick`
+calls `setReportData()` + routes to `/report/summary`) was **not
+touched** beyond a pure color-constant import consolidation (see below) —
+confirmed by literally diffing it against the prior commit before
+considering this done. Compare-mode selection is a **separate** component
+(`SelectableReportRow.tsx`), not a variant/prop-branch of `ReportCard`,
+specifically so the single-open path has zero surface area for this
+change to regress. `app/dashboard/page.tsx`'s auth check, Supabase query,
+and empty/error states are also untouched — the only edit there swaps
+which component renders the non-empty list (`ReportCard` mapping →
+`<DashboardReports rows={rows} />`).
+
+New: `components/dashboard/DashboardReports.tsx` (client component, owns
+sort/filter/compare-mode state — `page.tsx` stays a server component that
+only fetches), `SelectableReportRow.tsx` (compare-mode checkbox row),
+`ReportComparison.tsx` (the side-by-side view: cards row with per-report
+color identity, a shared multi-series radar chart, and a numeric
+factor-by-factor table underneath — the table wasn't explicitly asked
+for, added because a radar chart alone is hard to read exact numbers off
+of and "a team evaluating several proposals" implies wanting precision,
+not just a vibe). Sort (Newest/Highest/Lowest score) and a verdict filter
+(All/GO/REFINE/PIVOT) both work client-side over the already-fetched
+rows — no new query. Compare selection capped at 4 (shown in the UI as
+"N selected (max 4)", not a silent refusal) so the shared chart/table
+stay legible.
+
+**Comparison colors are deliberately NOT the go/refine/pivot signal
+colors** — two compared reports can share a verdict and still need to be
+told apart on the same chart, so `ReportComparison.tsx` uses its own
+small fixed categorical palette (purple/blue/pink/gold) instead, applied
+consistently across the card top-borders, the radar chart legend, and the
+table headers so the same color always means the same report throughout
+the view.
+
+**Paid down documented debt while here**: `TONE_COLOR`/`TONE_DIM`/
+`VERDICT_TONE`/`tierForScore` were duplicated in `Snapshot.tsx` and
+`ReportCard.tsx`, with a note on the `ReportCard.tsx` entry above saying
+"revisit if a third place needs the same mapping." `ReportComparison.tsx`
+became that third place, so this pass actually did the consolidation
+instead of duplicating a third time: new `lib/verdict-tone.ts`, both
+existing files now import from it, and `LandingPage.tsx`'s import of
+`TONE_COLOR`/`tierForScore` (previously re-exported through
+`Snapshot.tsx`) now points at the canonical source directly.
+
+**Verified for real, not just typechecked** — this feature needed no
+Gemini call, so the usual quota block didn't apply. Since there's no
+real authenticated session available to test against live Supabase data,
+built a temporary local route (`app/devtest-dashboard/page.tsx`) rendering
+`<DashboardReports>` with 4 hand-written mock reports covering different
+scores/verdicts, clicked through sort, filter, compare-mode selection,
+the comparison view (cards + radar chart + table all confirmed rendering
+correctly with real interaction, not just "it compiles"), and the
+back/exit controls — then **deleted the route** before committing; it
+was never part of the feature, purely a verification aid, same spirit as
+the standalone test scripts used earlier this session to verify the
+Gemini SDK directly. **Still not verified**: the real end-to-end path
+with actual signed-in Supabase data (mock data proved the component
+logic works, not that the Supabase query/RLS/real report shape lines up
+perfectly) — worth a real click-through once the founder's signed-in
+session is available, same as the still-open Stage 2 verification item
+above.
+
 ## Architecture
 
 - Next.js 15 (App Router), TypeScript, Tailwind v4 (CSS-first config in
@@ -702,14 +776,26 @@ time.
   As of Stage 2, `app/api/generate/route.ts` inserts into it for signed-in
   users (best-effort, never blocks the response — see status log above).
 - `app/dashboard/page.tsx` — lists a signed-in user's saved reports
-  (server component, redirects to `/login?next=/dashboard` if signed out).
+  (server component, redirects to `/login?next=/dashboard` if signed out;
+  still owns the Supabase query, auth check, and empty/error states).
   `components/dashboard/ReportCard.tsx` — clicking a saved report doesn't
   re-fetch anything; it calls `useReport().setReportData()` and routes to
   `/report/summary`, reusing the same context + step UI a fresh generation
-  uses. Verdict badge styling (`TONE_COLOR`/`TONE_DIM` by verdict) is
-  duplicated from `Snapshot.tsx` rather than imported — those constants
-  aren't exported there and it's 3 lines; revisit if a third place needs
-  the same mapping.
+  uses. **This exact click-to-open behavior is treated as a hard
+  constraint, not just current behavior** — see the 2026-07-22 comparison
+  mode entry below for why it stayed untouched even while the rest of the
+  dashboard changed around it.
+  `components/dashboard/DashboardReports.tsx` (2026-07-22, client
+  component) now owns everything interactive: sort (newest/score),
+  verdict filter, and compare mode — which renders
+  `SelectableReportRow.tsx` instead of `ReportCard.tsx` for selection, and
+  `ReportComparison.tsx` for the side-by-side view (shared radar chart +
+  numeric table). Verdict badge styling (`TONE_COLOR`/`TONE_DIM`/
+  `VERDICT_TONE`/`tierForScore`) used to be duplicated in `Snapshot.tsx`
+  and `ReportCard.tsx` — consolidated into `lib/verdict-tone.ts` once
+  `ReportComparison.tsx` became the third place needing it (this was
+  flagged as the trigger to do so back when the duplication was still
+  only two places).
 - `next` redirect support was added to the auth flow so a signed-out visit
   to a protected route returns there after login: `AuthForm` takes an
   optional `next` prop (default `/`) used for both the password-login
