@@ -18,12 +18,20 @@ const MAX_IDEA_LENGTH = 500;
 // same open decision as before this swap.
 export const maxDuration = 60;
 
-// Groq's free tier is far more available than Gemini's was, but still has
-// a real 30 req/min ceiling that a quick round of manual testing could
-// realistically hit — worth one retry with backoff rather than failing
-// immediately, same reasoning as the Gemini 503 retry this replaces.
+// Groq's free tier for this model has a real 8,000-token-per-minute cap
+// (confirmed live via a standalone diagnostic script, not documentation —
+// Groq's docs don't surface the exact per-model number). This app's system
+// prompt alone is ~3,000 tokens, so a single generation can leave very
+// little headroom for a same-minute second request; a 429 here more often
+// means "wait for the TPM window to refill" than "try again right away."
+// One retry, but the backoff below is driven by Groq's own `retry-after`
+// response header (present on real 429s, confirmed live) rather than a
+// fixed guess — that header told us to wait anywhere from ~6s to ~17s
+// during testing, which a flat 2s backoff would not have covered.
 const MAX_MODEL_RETRIES = 1;
-const RETRY_BACKOFF_MS = 2000;
+const FALLBACK_RETRY_BACKOFF_MS = 2000;
+// Guards against a header value large enough to blow past `maxDuration`.
+const MAX_RETRY_BACKOFF_MS = 30000;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -39,6 +47,19 @@ function getApiErrorStatus(error: unknown): number | undefined {
 function isRetryableStatus(error: unknown): boolean {
   const status = getApiErrorStatus(error);
   return status === 429 || status === 503;
+}
+
+function getRetryBackoffMs(error: unknown, attempt: number): number {
+  if (typeof error === "object" && error !== null && "headers" in error) {
+    const headers = (error as { headers?: unknown }).headers;
+    if (headers instanceof Headers) {
+      const retryAfter = Number(headers.get("retry-after"));
+      if (Number.isFinite(retryAfter) && retryAfter > 0) {
+        return Math.min(retryAfter * 1000, MAX_RETRY_BACKOFF_MS);
+      }
+    }
+  }
+  return FALLBACK_RETRY_BACKOFF_MS * attempt;
 }
 
 // The OpenAI SDK's error `.message` is the raw API response body — readable
@@ -123,17 +144,39 @@ export async function POST(request: Request) {
           ],
           temperature: 0.7,
           response_format: { type: "json_object" },
-        });
+          // gpt-oss-120b is a reasoning model — without this, it was
+          // measured spending ~800 of its ~3,000-token completion budget on
+          // hidden reasoning before writing any JSON, then hitting the
+          // token cap mid-report (buildBrief, the last field in the shape,
+          // came back empty). "low" cut reasoning to ~30-60 tokens and let
+          // real generations finish with finish_reason "stop" instead of
+          // "length" across repeated live tests. Confirmed live, not from
+          // Groq's docs — this parameter isn't part of the OpenAI SDK's
+          // types, hence the cast below.
+          reasoning_effort: "low",
+        } as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming);
         break;
       } catch (error) {
         if (attempt >= MAX_MODEL_RETRIES || !isRetryableStatus(error)) throw error;
+        const backoffMs = getRetryBackoffMs(error, attempt + 1);
         attempt += 1;
-        console.log(`[generate] Groq returned ${getApiErrorStatus(error)}, retry ${attempt}/${MAX_MODEL_RETRIES}`);
-        await sleep(RETRY_BACKOFF_MS * attempt);
+        console.log(
+          `[generate] Groq returned ${getApiErrorStatus(error)}, retry ${attempt}/${MAX_MODEL_RETRIES} after ${backoffMs}ms`,
+        );
+        await sleep(backoffMs);
       }
     }
 
     console.log(`[generate] ${Date.now() - generateStart}ms, model=openai/gpt-oss-120b, retries=${attempt}`);
+
+    // A truncated-but-still-valid-JSON response (the model hit its token
+    // cap mid-report) isn't a hard failure — lib/parse-report.ts already
+    // falls back gracefully per field — but it's worth knowing about if it
+    // keeps happening, since it means a real field the founder sees is
+    // silently thinner than the model could have produced.
+    if (completion.choices[0]?.finish_reason === "length") {
+      console.warn("[generate] completion hit the token cap (finish_reason=length) — report may have missing fields");
+    }
 
     const text = completion.choices[0]?.message?.content ?? "";
 

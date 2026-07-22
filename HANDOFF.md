@@ -809,6 +809,66 @@ a real click-through the same way every other provider swap in this
 project has been (real idea in, full report out, not just "the request
 didn't error").
 
+**2026-07-22 (same day, later still): found and fixed a real bug in the
+Groq swap via a real generation — the founder added their key, and the
+very first live report came back with Build Brief entirely empty and
+Validate's landing-page copy missing, while everything else (scores,
+financials, roadmap, competitors, 10-section full report) looked
+correct.** Not a crash, not a parse failure — `lib/parse-report.ts`'s
+existing graceful-fallback tier for those fields quietly rendered "Not
+enough information..." instead of erroring, which is exactly why this
+was easy to miss without actually reading every step of a real report.
+
+**Root cause, found with a standalone script hitting Groq directly**
+(same diagnostic-script pattern used earlier this session for Gemini):
+`openai/gpt-oss-120b` is a *reasoning* model — part of its completion
+token budget goes to hidden chain-of-thought before it writes any JSON.
+Groq's real per-model free-tier limit for this model is **8,000 tokens
+per minute** (confirmed live via the API's own rate-limit headers, not
+in Groq's public docs), and this app's system prompt alone is ~3,000
+tokens. A real run showed the model spending ~800 completion tokens on
+reasoning, then hitting its output cap mid-JSON — right around
+`buildBrief`, the very last field in the shape — with `finish_reason:
+"length"`. Confirmed reproducible: an unmodified request timed out
+partway through the schema on 2 of 2 live attempts before the fix, 0 of
+4 live attempts after it (3 fresh ideas + the one from the PR's own
+test plan below).
+
+**Fix**: added `reasoning_effort: "low"` to the Groq request. Verified
+live: reasoning tokens dropped from ~800 to ~30-60, completion finished
+with `finish_reason: "stop"` (not `"length"`) across every repeat test,
+comfortably inside the 8,000 TPM budget. This parameter isn't part of
+the `openai` npm package's TypeScript types (it's a Groq-specific
+extension to the OpenAI-compatible endpoint), so
+`app/api/generate/route.ts` casts the request object to
+`OpenAI.Chat.ChatCompletionCreateParamsNonStreaming` rather than `any`,
+to keep the response type (and `.choices` access after it) intact.
+
+**Also fixed while investigating**: the 429 retry backoff was a flat
+2-second guess carried over from the Gemini 503 retry it replaced —
+too short for what the 8,000 TPM limit actually needs. Groq's 429
+responses carry a real `retry-after` header (confirmed live: 6-17s
+across several forced-429 tests), so `route.ts` now reads
+`error.headers.get("retry-after")` via the `openai` SDK's `APIError`
+class and backs off for that long instead, capped at 30s so a single
+retry can't blow past `maxDuration`. Falls back to the old flat guess
+only if the header is ever absent.
+
+**Verified live, end to end, after the fix**: real generations for "A
+subscription box that ships pre-portioned spices for home cooks" and "A
+marketplace connecting local farmers directly with restaurants" — every
+one of Summary, Financials, Roadmap, Competitors, Validate, Build Brief,
+and Full Report rendered real, idea-specific content on every step, PDF
+export completed with no console errors, and the competitive
+advantage note ("network effects... early local traction can create a
+moat") reflects the Marketplace-category prompt emphasis correctly —
+category classification is working, not just schema-complete.
+**Deleted before committing**: a temporary standalone diagnostic script
+(`scratch-test-groq.mjs`) used to isolate the Groq API directly from
+this app's own code, same verification technique used earlier this
+session for Gemini and for the dashboard comparison feature — never
+part of the shipped feature.
+
 ## Architecture
 
 - Next.js 15 (App Router), TypeScript, Tailwind v4 (CSS-first config in
