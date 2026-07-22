@@ -47,6 +47,7 @@ const WHAT_YOU_GET: Record<(typeof REPORT_STEPS)[number]["key"], string> = {
   roadmap: "MVP timeline, milestones, quick wins",
   competitors: "Named competitors and your edge over them",
   validate: "Interview questions, outreach drafts, and pre-sell copy",
+  build: "MVP scope, tech stack, and a paste-ready AI coding prompt",
   full: "The complete prose report, exportable as a PDF",
 };
 

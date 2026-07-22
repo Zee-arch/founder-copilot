@@ -145,6 +145,23 @@ export type CustomerValidation = {
   landingPageCopy: string; // one paragraph of pre-sell copy
 };
 
+export type TechStackChoice = {
+  layer: string; // e.g. "Frontend", "Payments" — free text, not a fixed enum, since what an idea needs varies too much to force into a rigid taxonomy (a hardware idea has no "Auth" layer; a marketplace has no "Firmware" layer)
+  choice: string; // e.g. "Next.js (App Router)"
+  reason: string; // one line, tied to this specific idea's actual needs
+};
+
+// A project-starter brief for handing to an AI coding tool — a brief, not
+// a build: no code or repo is generated, this is text output like every
+// other section. mvpScope is meant to stay consistent with the model's own
+// "MVP Feasibility" score/note from earlier in the same response, not a
+// second, disconnected opinion.
+export type BuildBrief = {
+  mvpScope: string; // what to build first vs. defer, informed by the MVP Feasibility score/note
+  techStack: TechStackChoice[]; // reasoned per-idea, never a default stack
+  starterPrompt: string; // literal, paste-ready prompt for Claude Code/Cursor/etc.
+};
+
 export type ValidationReport = {
   headline: string; // one-line qualitative judgment on the idea
   category: IdeaCategory; // classified by the model, steers emphasis only — see lib/prompt.ts
@@ -157,6 +174,7 @@ export type ValidationReport = {
   roadmap: Roadmap;
   competitive: CompetitiveLandscape;
   customerValidation: CustomerValidation;
+  buildBrief: BuildBrief;
   sources: Source[]; // real pages retrieved via Gemini's Google Search grounding (see route.ts)
   // Computed in code from `scores` — never trusted from the model directly,
   // so the number on screen always matches the math behind it.

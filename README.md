@@ -8,7 +8,7 @@
 
 ## What it does
 
-Type a startup idea in one sentence. FounderCopilot scores it across 8 independent factors with an LLM, then generates a 6-part report:
+Type a startup idea in one sentence. FounderCopilot scores it across 8 independent factors with an LLM, then generates a 7-part report:
 
 | Step | What's in it |
 |---|---|
@@ -17,6 +17,7 @@ Type a startup idea in one sentence. FounderCopilot scores it across 8 independe
 | **Roadmap** | MVP timeline, phased milestones (Validate → Build → Launch → Distribute), quick wins |
 | **Competitors** | Named competitors with qualitative strengths/weaknesses, plus sourced funding/valuation/user-count figures when a real citation backs them |
 | **Validate** | A customer interview guide, cold outreach email drafts, and pre-sell landing copy — starting drafts for validating with real people, not just AI |
+| **Build Brief** | Suggested MVP scope, a reasoned (not default) tech stack, and a paste-ready starter prompt for Claude Code/Cursor — a brief, not generated code |
 | **Full Report** | 10-section prose write-up (market, ICP, SWOT, GTM, risks, and more) |
 
 Each step has its own URL, the whole report exports to a PDF, and there's no login or account required.

@@ -24,6 +24,7 @@ import {
   ShieldAlert,
   Swords,
   Target,
+  Terminal,
   Users,
   Wallet,
   Wrench,
@@ -76,6 +77,7 @@ export const REPORT_STEPS = [
   { key: "roadmap", label: "Roadmap", icon: Map },
   { key: "competitors", label: "Competitors", icon: Target },
   { key: "validate", label: "Validate", icon: MessagesSquare },
+  { key: "build", label: "Build Brief", icon: Terminal },
   { key: "full", label: "Full Report", icon: ScrollText },
 ] as const;
 

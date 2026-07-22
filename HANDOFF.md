@@ -498,6 +498,71 @@ Founder: this is the third and most novel of today's three unverified
 features stacked on PR #6 — worth being the first one you check once
 quota resets, precisely because it's new UI, not modified UI.
 
+**2026-07-22 (same day, right after Validate): added a 7th report step,
+"Build Brief."** Deliberately framed by the founder as mirroring how this
+exact project came to exist — see README's "How this was built": the
+founder briefed Claude Code with an idea and direction, Claude implemented
+it. This step generates that same kind of starting brief for the
+founder's *validated* idea, to hand to an AI coding tool. Same pattern as
+Validate: one field addition to `REPORT_STEPS`, everything else that
+consumes it (nav, PDF loop, "what you get" strip) picked it up for free.
+
+New `BuildBrief` type (`lib/types.ts`): `mvpScope: string`, `techStack:
+TechStackChoice[]` (`{layer, choice, reason}` — `layer` is free text, not
+a fixed enum, since what an idea needs varies too much to force into a
+rigid taxonomy: a hardware idea has no "Auth" layer, a marketplace has no
+"Firmware" layer), `starterPrompt: string`. Explicitly out of scope per
+the founder's own instruction: no actual code or repo generation — this
+is text output rendered in the UI, exactly like every other section and
+nothing more.
+
+Three things `lib/prompt.ts` had to get right, all directly from the
+founder's own numbered spec:
+1. `mvpScope` must be **consistent with**, not a second opinion from, the
+   model's own "MVP Feasibility" score/note written earlier in the same
+   response — both come from the same single generation call, so this is
+   just a prompt instruction to stay internally consistent, not a
+   plumbing problem.
+2. `techStack` explicitly forbids defaulting to "Next.js + Supabase" (or
+   any other single stack) regardless of idea — called out by name in the
+   prompt as the exact generic-template failure this feature exists to
+   avoid. Slightly on-the-nose that "Next.js + Supabase" is also this
+   app's own stack; worth someone actually checking a hardware or
+   regulated-finance idea doesn't come back with it anyway out of model
+   training bias, once quota allows real testing.
+3. `starterPrompt` is instructed to read "the way a technical co-founder
+   would brief an engineer, not 'build me an app for X'" — the founder's
+   own phrase, kept close to verbatim in the prompt rather than
+   paraphrased, since it's a precise enough bar to aim for on its own.
+
+UI (`components/report/BuildBrief.tsx`): MVP scope panel, a tech-stack
+card grid, and a monospace starter-prompt block with a working
+copy-to-clipboard button — the only interactive control added to any
+report component this session, justified because the field's entire
+purpose is being pasted somewhere else. `"use client"` + local `useState`;
+every sibling report component relies on already being nested inside the
+page-level client boundary instead.
+
+Same honesty-tier caveat as Validate: `techStack`/`mvpScope`/
+`starterPrompt` are prompt-level trust, not structurally checkable —
+there's no URL or API metadata to cross-check a technology recommendation
+against, unlike sourced competitor figures. Not oversold as more
+rock-solid than it is.
+
+**Not yet live-verified — the same persistent quota block, now spanning
+this entire multi-hour session.** Typechecked, linted clean. Fixed the
+"N-part report" copy this pushed stale a second time in one session
+(`README.md`'s table and lead sentence; `app/how-it-works/page.tsx`
+already self-corrects via `REPORT_STEPS.length` from the Validate change,
+needed no further edit). **Completely unseen**: whether tech stack
+suggestions are actually reasoned per-idea (the one thing most worth
+checking, given the explicit anti-genericness ask), whether the starter
+prompt reads like a real technical brief or a vague one-liner, whether
+the copy button works, and whether a 7-step PDF export still holds up.
+Four features deep on PR #6 now, all sharing one blocker — worth
+resetting quota and checking all four in one pass rather than one at a
+time.
+
 ## Architecture
 
 - Next.js 15 (App Router), TypeScript, Tailwind v4 (CSS-first config in
@@ -529,8 +594,9 @@ quota resets, precisely because it's new UI, not modified UI.
 - `components/LandingPage.tsx` (rendered by `app/page.tsx`) — input form +
   fetch orchestration. On success, stores the report in `ReportProvider`
   and routes to `/report/summary`; no longer renders the report inline.
-- `app/report/layout.tsx` — the report shell: idea-analyzed banner, 5-step
-  nav (real `<Link>`s to `/report/{step}`), Download PDF button. Redirects
+- `app/report/layout.tsx` — the report shell: idea-analyzed banner, step
+  nav (real `<Link>`s to `/report/{step}`, driven by `REPORT_STEPS` — see
+  below, so its count isn't hardcoded here), Download PDF button. Redirects
   to `/` if `useReport()` has no report once hydrated.
 - `app/report/[step]/page.tsx` + `components/report/StepContent.tsx` — the
   dynamic step route renders `<ReportStepContent step={step} report={...} />`,
@@ -543,21 +609,36 @@ quota resets, precisely because it's new UI, not modified UI.
 - `components/report/Financials.tsx`, `Roadmap.tsx`, `CompetitiveLandscape.tsx`
   — the three new Phase 2 sections, same dark "instrument panel" styling as
   Snapshot (data/card-driven, as opposed to FullReport's light prose style).
-- `components/report/CustomerValidation.tsx` (2026-07-22) — the 6th report
-  step (`REPORT_STEPS` key `"validate"`), same dark instrument-panel style
-  as the above three. Renders `report.customerValidation` (interview
-  questions, outreach email drafts, landing-page copy) with a prominent
-  "starting draft, not a finished asset" banner up top, not just a small
-  footer disclaimer like the other sections — deliberate, since this is
-  content people might actually copy-paste and send.
+- `components/report/CustomerValidation.tsx` (2026-07-22) — `REPORT_STEPS`
+  key `"validate"`, same dark instrument-panel style as the above three.
+  Renders `report.customerValidation` (interview questions, outreach email
+  drafts, landing-page copy) with a prominent "starting draft, not a
+  finished asset" banner up top, not just a small footer disclaimer like
+  the other sections — deliberate, since this is content people might
+  actually copy-paste and send.
+- `components/report/BuildBrief.tsx` (2026-07-22, same day) —
+  `REPORT_STEPS` key `"build"`, added right after `CustomerValidation.tsx`
+  in the same session. Renders `report.buildBrief` (suggested MVP scope,
+  a per-idea-reasoned tech stack, a literal starter prompt for an AI
+  coding tool). The only report component with client interactivity
+  beyond what its parent tree already provides — a copy-to-clipboard
+  button on the starter prompt (`"use client"`, local `useState`), since
+  the entire point of that field is pasting it elsewhere. Every other
+  `components/report/*` file relies on already being nested inside the
+  page-level client boundary rather than declaring its own.
 - `components/report/FullReport.tsx` — the 10 prose sections, light
   background (deliberately different from Snapshot's dark panel — long
   prose is more readable on light, short data readouts work on dark). Has
   a sticky jump-nav (anchor links to each section) and a per-section icon.
 - `lib/report-icons.tsx` — the single shared icon lookup (lucide-react) for
   score criteria, report sections, verdicts, milestone phases, and the
-  5-step `REPORT_STEPS` list (key/label/icon) that both the step nav and
-  the PDF export loop iterate over.
+  `REPORT_STEPS` list (key/label/icon) that the step nav, the PDF export
+  loop, and `LandingPage.tsx`'s "What you get" strip all iterate over
+  generically — the step nav/PDF loop need zero changes to add a step,
+  only `StepContent.tsx`'s switch and `LandingPage.tsx`'s `WHAT_YOU_GET`
+  record (TypeScript enforces the latter, since it's typed against
+  `REPORT_STEPS`' keys). Confirmed twice in one session (Validate, then
+  Build Brief) — see the two 2026-07-22 status log entries.
 - `lib/pdf.ts` — client-side PDF export via **html2canvas-pro** (not plain
   `html2canvas` — see below) + jsPDF. Exports `createReportPdf` /
   `addElementAsPages` / `saveReportPdf` as separate steps so the caller can

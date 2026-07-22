@@ -3,6 +3,7 @@ import {
   MILESTONE_PHASES,
   REPORT_SECTION_TITLES,
   SCORE_CRITERIA,
+  type BuildBrief,
   type Competitor,
   type CompetitiveLandscape,
   type CustomerValidation,
@@ -17,6 +18,7 @@ import {
   type ScoreCriterion,
   type Source,
   type SourcedFigure,
+  type TechStackChoice,
   type ValidationReport,
   type Verdict,
 } from "@/lib/types";
@@ -61,6 +63,7 @@ type RawScore = { label?: unknown; score?: unknown; note?: unknown };
 type RawRevenueStream = { name?: unknown; description?: unknown };
 type RawMilestone = { title?: unknown; phase?: unknown; timeframe?: unknown };
 type RawOutreachEmail = { subject?: unknown; body?: unknown };
+type RawTechStackChoice = { layer?: unknown; choice?: unknown; reason?: unknown };
 type RawSourcedFigure = { value?: unknown; url?: unknown };
 type RawCompetitor = {
   name?: unknown;
@@ -93,6 +96,11 @@ type RawJson = {
     interviewQuestions?: unknown[];
     outreachEmails?: RawOutreachEmail[];
     landingPageCopy?: unknown;
+  };
+  buildBrief?: {
+    mvpScope?: unknown;
+    techStack?: RawTechStackChoice[];
+    starterPrompt?: unknown;
   };
 };
 
@@ -267,6 +275,27 @@ export function parseValidationReport(text: string, groundedSources: Source[]): 
     landingPageCopy: str(parsed.customerValidation?.landingPageCopy, "Not enough information to draft pre-sell copy."),
   };
 
+  // --- build brief: same graceful tier as customer validation above — a
+  // brief, not a build, so nothing here is structurally verifiable the way
+  // sourced competitor figures are; trust is at the prompt level. layer is
+  // deliberately free text (not clamped to a fixed set like milestone
+  // phase) since what an idea needs varies too much for a rigid taxonomy.
+  const techStack: TechStackChoice[] = (
+    Array.isArray(parsed.buildBrief?.techStack) ? parsed.buildBrief.techStack : []
+  )
+    .filter(
+      (t): t is RawTechStackChoice =>
+        typeof t?.layer === "string" && t.layer.trim().length > 0 && typeof t?.choice === "string" && t.choice.trim().length > 0,
+    )
+    .slice(0, 6)
+    .map((t) => ({ layer: str(t.layer), choice: str(t.choice), reason: str(t.reason, "") }));
+
+  const buildBrief: BuildBrief = {
+    mvpScope: str(parsed.buildBrief?.mvpScope, "Not enough information to suggest an MVP scope."),
+    techStack,
+    starterPrompt: str(parsed.buildBrief?.starterPrompt, "Not enough information to draft a starter prompt."),
+  };
+
   // --- category: informational, steers the model's own emphasis (see
   // lib/prompt.ts) — never trusted to gate or restructure anything in code,
   // so an invalid/missing value just falls back to the no-special-emphasis
@@ -288,6 +317,7 @@ export function parseValidationReport(text: string, groundedSources: Source[]): 
     roadmap,
     competitive,
     customerValidation,
+    buildBrief,
     sources: groundedSources,
     overallScore,
     verdict,

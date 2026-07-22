@@ -24,6 +24,7 @@ Rules:
 - "roadmap.milestones": 4-6 items, roughly chronological, each "phase" must be exactly one of: ${MILESTONE_PHASES.join(", ")}. Timeframes are relative ("Month 2-3"), never specific calendar dates.
 - "financials.revenueStreams": 2-4 items. "roadmap.quickWins": 3-5 items, each genuinely doable within a week.
 - "customerValidation" exists because a score alone isn't the finish line — real customer conversations are. "interviewQuestions": 5-8 open-ended, non-leading questions about the founder's PROBLEM space (how do they currently handle this, what have they tried, what's frustrating about it) — never a leading or yes/no question that fishes for validation (not "Would you pay $X for this?", not "Do you agree this is a problem?"). "outreachEmails": 2-3 short (under 100 words each) cold emails to plausible early customers or design partners, asking for a conversation, not a sale — genuine subject lines, no hype. "landingPageCopy": one paragraph of pre-sell landing-page copy aimed at gauging real signup interest. ALL THREE must contain zero fabricated statistics, zero invented testimonials or quotes, and zero specific claims like "X% of users" or "join thousands of..." — these are drafts to go get real data with, not a place to invent fake data. If you cannot write a genuinely specific, non-generic version of one of these three for this idea, write a shorter, more honest one rather than padding it with invented specifics.
+- "buildBrief" turns the validated idea into a starting point for briefing an AI coding tool (Claude Code, Cursor, or similar) — a brief, not a build; this is text output like everything else, no code is generated. "mvpScope": 2-4 sentences on what to build first vs. what to explicitly defer, and it MUST be consistent with — not a second, disconnected opinion from — your own "MVP Feasibility" score and note above in this same response. "techStack": 3-6 items, each an object with "layer" (whatever this specific idea actually needs — e.g. "Frontend", "Database", "Payments", "Firmware", "Hosting" — not a fixed checklist every idea gets), "choice" (a specific real technology), and "reason" (one line tied to what THIS idea needs). Reason from the idea itself: a hardware idea, a marketplace, and a B2B SaaS tool need genuinely different stacks — do NOT default to "Next.js + Supabase" or any other single stack regardless of what the idea actually is; that's exactly the generic-template failure this field exists to avoid. "starterPrompt": a single literal, paste-ready prompt the founder could hand directly to an AI coding tool — write it the way a technical co-founder would brief an engineer, not "build me an app for X": state the specific goal and core user flow, the explicit MVP scope boundary (what NOT to build yet, matching "mvpScope"), and the suggested stack from above. Several sentences or short paragraphs, specific to this idea, not one vague line.
 - Do NOT include a "sources" field yourself — sources are captured automatically from search grounding metadata, not from anything you write. Leave it out of your JSON entirely.
 - Do NOT calculate or include an overall score or verdict yourself — that is computed separately from your 8 factor scores. Just score the 8 factors honestly and independently of each other.
 - Return ONLY valid JSON. No markdown fences, no preamble, no trailing text.
@@ -105,6 +106,13 @@ The JSON must match this shape exactly:
       { "subject": "Short, genuine subject line", "body": "Under 100 words, asks for a conversation, not a sale. No hype, no fabricated stats." }
     ],
     "landingPageCopy": "One paragraph of pre-sell copy to gauge real signup interest — no invented testimonials, no fabricated numbers."
+  },
+  "buildBrief": {
+    "mvpScope": "2-4 sentences on what to build first vs. defer, consistent with your own MVP Feasibility score/note above.",
+    "techStack": [
+      { "layer": "Whatever layer this idea actually needs, e.g. 'Frontend'", "choice": "A specific real technology", "reason": "One line tied to this idea's actual needs, not a generic default." }
+    ],
+    "starterPrompt": "A full, specific, paste-ready prompt for an AI coding tool — goal, core user flow, explicit MVP scope boundary, and suggested stack. Not 'build me an app for X'."
   }
 }
 
