@@ -1,8 +1,10 @@
+import { cookies } from "next/headers";
 import OpenAI from "openai";
 import { buildValidationUserPrompt, VALIDATION_SYSTEM_PROMPT } from "@/lib/prompt";
 import { parseValidationReport } from "@/lib/parse-report";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { createClient } from "@/lib/supabase/server";
+import { ACTIVE_ORG_COOKIE } from "@/lib/org-cookie";
 
 const MAX_IDEA_LENGTH = 500;
 
@@ -206,7 +208,17 @@ export async function POST(request: Request) {
       } = await supabase.auth.getUser();
 
       if (user) {
-        const { error: insertError } = await supabase.from("reports").insert({ user_id: user.id, idea, report });
+        // Tags the report with the signed-in user's active org, if any.
+        // Not re-validated against membership here — RLS's own insert
+        // policy (`org_id is null or is_org_member(org_id)`) already
+        // enforces that, and this insert is best-effort/silent on failure
+        // anyway, so a stale/spoofed cookie value just fails closed.
+        const cookieStore = await cookies();
+        const orgId = cookieStore.get(ACTIVE_ORG_COOKIE)?.value ?? null;
+
+        const { error: insertError } = await supabase
+          .from("reports")
+          .insert({ user_id: user.id, idea, report, org_id: orgId });
         if (insertError) {
           console.error("[generate] failed to save report:", insertError.message);
         }
