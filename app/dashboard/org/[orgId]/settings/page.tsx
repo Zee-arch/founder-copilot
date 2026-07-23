@@ -19,11 +19,11 @@ export default async function OrgSettingsPage({ params }: { params: Promise<{ or
 
   if (!user) redirect(`/login?next=${encodeURIComponent(`/dashboard/org/${orgId}/settings`)}`);
 
-  const { data: org } = await supabase.from("orgs").select("id, name, slug").eq("id", orgId).maybeSingle();
+  const { data: org } = await supabase.from("organizations").select("id, name").eq("id", orgId).maybeSingle();
   if (!org) notFound();
 
   const { data: membership } = await supabase
-    .from("org_members")
+    .from("organization_members")
     .select("role")
     .eq("org_id", orgId)
     .eq("user_id", user.id)
@@ -34,7 +34,7 @@ export default async function OrgSettingsPage({ params }: { params: Promise<{ or
   if (myRole === "member") redirect(`/dashboard/org/${orgId}`);
 
   const { data: memberRows } = await supabase
-    .from("org_members")
+    .from("organization_members")
     .select("user_id, role, created_at")
     .eq("org_id", orgId)
     .order("created_at", { ascending: true });

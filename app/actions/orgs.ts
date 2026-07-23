@@ -2,43 +2,13 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
-import { ACTIVE_ORG_COOKIE } from "@/lib/org-cookie";
 
-const ONE_YEAR = 60 * 60 * 24 * 365;
-
-function slugify(name: string): string {
-  const base = name
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  // A random suffix, not a numeric counter — sidesteps a slug-collision
-  // query entirely, and `orgs.slug` still has a unique constraint as the
-  // real backstop.
-  const suffix = Math.random().toString(36).slice(2, 7);
-  return `${base || "org"}-${suffix}`;
-}
-
-export async function createOrg(name: string): Promise<{ orgId?: string; error?: string }> {
-  const trimmed = name.trim();
-  if (!trimmed) return { error: "Give your org a name." };
-
-  const supabase = await createClient();
-  const { data, error } = await supabase.rpc("create_org", {
-    org_name: trimmed,
-    org_slug: slugify(trimmed),
-  });
-
-  if (error) return { error: error.message };
-
-  const cookieStore = await cookies();
-  cookieStore.set(ACTIVE_ORG_COOKIE, data as string, { path: "/", maxAge: ONE_YEAR });
-
-  revalidatePath("/dashboard");
-  return { orgId: data as string };
-}
+// No createOrg/setActiveOrg here — org creation is exclusively tied to
+// Stripe Team-plan checkout (see app/api/stripe/checkout/route.ts), and a
+// user has at most one org (see lib/entitlements.ts's findOrgMembership).
+// These actions only manage membership *within* an org that already
+// exists: inviting, accepting, and role/removal management.
 
 export async function inviteToOrg(
   orgId: string,
@@ -77,13 +47,13 @@ export async function revokeInvite(orgId: string, inviteId: string) {
 
 export async function removeMember(orgId: string, userId: string) {
   const supabase = await createClient();
-  await supabase.from("org_members").delete().eq("org_id", orgId).eq("user_id", userId);
+  await supabase.from("organization_members").delete().eq("org_id", orgId).eq("user_id", userId);
   revalidatePath(`/dashboard/org/${orgId}/settings`);
 }
 
 export async function updateMemberRole(orgId: string, userId: string, role: "admin" | "member") {
   const supabase = await createClient();
-  await supabase.from("org_members").update({ role }).eq("org_id", orgId).eq("user_id", userId);
+  await supabase.from("organization_members").update({ role }).eq("org_id", orgId).eq("user_id", userId);
   revalidatePath(`/dashboard/org/${orgId}/settings`);
 }
 
@@ -94,12 +64,7 @@ export async function leaveOrg(orgId: string) {
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  await supabase.from("org_members").delete().eq("org_id", orgId).eq("user_id", user.id);
-
-  const cookieStore = await cookies();
-  if (cookieStore.get(ACTIVE_ORG_COOKIE)?.value === orgId) {
-    cookieStore.delete(ACTIVE_ORG_COOKIE);
-  }
+  await supabase.from("organization_members").delete().eq("org_id", orgId).eq("user_id", user.id);
 
   redirect("/dashboard");
 }
@@ -109,40 +74,5 @@ export async function acceptInvite(token: string): Promise<{ orgId?: string; err
   const { data, error } = await supabase.rpc("accept_org_invite", { invite_token: token });
   if (error) return { error: error.message };
 
-  const cookieStore = await cookies();
-  cookieStore.set(ACTIVE_ORG_COOKIE, data as string, { path: "/", maxAge: ONE_YEAR });
-
   return { orgId: data as string };
-}
-
-// Never trusts the client-passed orgId blindly — even though a spoofed
-// value would also just fail RLS on the next report insert, checking
-// membership here means the switch fails immediately with a clear
-// redirect instead of a silently-swallowed insert failure later.
-export async function setActiveOrg(orgId: string | null) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  const cookieStore = await cookies();
-
-  if (orgId === null) {
-    cookieStore.delete(ACTIVE_ORG_COOKIE);
-    revalidatePath("/dashboard");
-    return;
-  }
-
-  const { data: membership } = await supabase
-    .from("org_members")
-    .select("org_id")
-    .eq("org_id", orgId)
-    .eq("user_id", user.id)
-    .maybeSingle();
-
-  if (!membership) redirect("/dashboard");
-
-  cookieStore.set(ACTIVE_ORG_COOKIE, orgId, { path: "/", maxAge: ONE_YEAR });
-  revalidatePath("/dashboard");
 }

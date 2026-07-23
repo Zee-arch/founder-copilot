@@ -25,11 +25,11 @@ export default async function OrgDashboardPage({ params }: { params: Promise<{ o
 
   if (!user) redirect(`/login?next=${encodeURIComponent(`/dashboard/org/${orgId}`)}`);
 
-  const { data: org } = await supabase.from("orgs").select("id, name, slug").eq("id", orgId).maybeSingle();
+  const { data: org } = await supabase.from("organizations").select("id, name").eq("id", orgId).maybeSingle();
   if (!org) notFound();
 
   const { data: membership } = await supabase
-    .from("org_members")
+    .from("organization_members")
     .select("role")
     .eq("org_id", orgId)
     .eq("user_id", user.id)
