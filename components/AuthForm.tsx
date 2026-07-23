@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { isAuthRetryableFetchError } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
 import { GoogleIcon } from "@/components/GoogleIcon";
 
@@ -9,7 +10,22 @@ type Mode = "login" | "sign-up";
 
 // Supabase's AuthError.message is normally a string, but this guards against
 // any non-Error rejection (e.g. a network failure) rendering "[object Object]".
+//
+// AuthRetryableFetchError needs its own check, checked first: auth-js's
+// handleError() classifies every 5xx as a generic "retryable" error WITHOUT
+// ever parsing the response body (see node_modules/@supabase/auth-js/dist/main/lib/fetch.js),
+// so `.message` ends up being `JSON.stringify()` of the raw fetch Response
+// object itself — i.e. the literal string "{}". That's a real Error with a
+// truthy .message, so the plain instanceof check below would happily render
+// "{}" to the user instead of a real explanation. Confirmed live: a sign-up
+// whose confirmation email fails to send (e.g. Resend's sandbox sender
+// rejecting a recipient outside its verified domain) comes back from
+// Supabase as exactly this shape, and the real "Error sending confirmation
+// email" reason is unrecoverable client-side once auth-js has discarded it.
 function errorMessage(error: unknown, fallback: string): string {
+  if (isAuthRetryableFetchError(error)) {
+    return "Something went wrong on our end. Please try again in a moment, or use Google sign-in instead.";
+  }
   if (error instanceof Error && error.message) return error.message;
   return fallback;
 }
