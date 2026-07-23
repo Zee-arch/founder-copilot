@@ -1147,6 +1147,96 @@ just that both compile and the page renders), and the real Stripe
 checkout/webhook round trip (blocked on the founder adding real Stripe
 env vars, per the entry above).
 
+**2026-07-24: org/team cohort dashboard, built in parallel with the
+hybrid-pricing branch above — real conflict, not just textual, resolved
+on merge.** This branch built its own `orgs`/`org_members`/`org_invites`
+(self-serve create, RLS, invite links, a cohort dashboard) at the same
+time PR #8 above independently built `organizations`/`organization_members`
+for Team-plan billing — same territory, different names, and PR #8's
+version had **no way for a second person to ever join a Team org** (only
+the Stripe checkout route could create a membership row). Reconciled onto
+`organizations`/`organization_members` as the one real table:
+
+- Dropped this branch's `orgs`/`org_members` tables and its `create_org`
+  RPC entirely — org creation stays exclusively Stripe-checkout-gated,
+  matching PR #8's existing design. Kept `org_invites` and `profiles`
+  (genuinely additive, PR #8 had neither) and repointed them at
+  `organizations(id)`.
+- Added `organization_members` UPDATE/DELETE RLS policies (role changes,
+  leaving/removal — PR #8 never had these since nothing could add a
+  second member anyway), a `unique(user_id)` constraint, and an
+  `accept_org_invite` guard against joining a second org, since accepting
+  an invite is now the first path into that table besides checkout.
+- `app/api/generate/route.ts` tags a report's `org_id` straight from
+  `consumeCredit`'s own entitlements lookup — no separate "active org"
+  cookie/switcher, since a user has at most one org (same assumption
+  `lib/entitlements.ts` already made).
+- Folded the standalone `supabase/migrations/` directory into
+  `schema.sql`, matching PR #8's established single-file convention
+  instead of introducing a second schema-management pattern.
+
+**Found and fixed a real, pre-existing bug in PR #8 while reconciling,
+unrelated to this branch's own changes**: `organization_members`'s
+original SELECT policy self-referenced `organization_members` from
+inside its own USING clause (`org_id in (select org_id from
+organization_members where user_id = auth.uid())`) — Postgres rejects
+this as infinite recursion the moment it's actually evaluated, which
+would have broken the very first signed-in Team user's dashboard load in
+production (nobody had hit this yet — no real Team org existed to
+trigger it). Rewritten to use the existing `is_org_member()` SECURITY
+DEFINER helper instead, which exists specifically to avoid this trap.
+
+Verified: `tsc`/`eslint`/`next build` all pass post-merge. Full RLS
+isolation re-verified directly against the live Supabase project
+(rolled-back transaction, real users impersonated via
+`request.jwt.claim.sub` — no passwords entered, no accounts created):
+ownership, non-member/outsider isolation, role-gated invite creation, the
+new already-in-an-org guard, and org-scoped report visibility all held.
+Pushed as PR #9, `mergeStateStatus: CLEAN`/`mergeable: MERGEABLE` as of
+this writing — **not yet merged to `main`**, so none of this is live on
+production yet; the live site is still on PR #8's commit.
+
+**2026-07-24, same day — broader "is everything actually fine" audit**,
+prompted by the founder wanting to finalize and start using the product
+for real. Checked GitHub (PR #9 mergeable, no other open PRs/issues),
+Vercel (production `READY` on PR #8's commit, only stale pre-Groq-swap
+runtime errors in the last 7 days — none current), Supabase (advisors
+clean bar the pre-existing leaked-password-protection toggle), and did a
+real end-to-end generation against the live production site
+(`founder-copilot-flame.vercel.app`) — succeeded, 68/100 REFINE, no
+console errors, all report tabs + PDF button present. Also found (while
+auditing, not from this branch's own migrations) that the live database
+carries **duplicate reports RLS policies** — the original pre-org
+`"users can read/insert their own reports"` policies were never dropped
+when PR #8's own full `schema.sql` run re-created them alongside this
+branch's org-aware replacements (different policy names, so Postgres
+didn't error, just silently kept both). Not a security gap — the
+surviving org-aware policies are already a strict superset — but
+redundant and worth cleaning up, along with the same `auth.uid()`
+per-row-reevaluation performance issue on `user_billing`/`credit_ledger`/
+`api_keys` and a few missing indexes on PR #8's own FK columns. Fix
+written, **pending the founder's go-ahead to apply it** (same
+per-migration confirmation pattern as everything else in this log).
+
+**What's still unverified/not done, going into finalization**:
+1. **PR #9 needs an explicit merge decision** — it won't appear on the
+   live site until then.
+2. **Stripe is still not connected to a real account** — per the PR #8
+   entry above, completely unchanged since then. Checkout/webhook/portal
+   routes exist and typecheck but have never run against real Stripe
+   keys.
+3. **Portkey/Upstash Vercel env vars** — per the PR #7 entry, needed to
+   be added to Vercel's Production environment; not independently
+   re-confirmed this session (Claude has no tool access to read Vercel
+   env var names/values, by design — only the founder can confirm this
+   from the Vercel dashboard).
+4. `SUPABASE_SERVICE_ROLE_KEY` — required for the billing/API-key code
+   paths (`lib/supabase/service.ts`) to work at all; same "founder must
+   confirm" limitation as above.
+5. The reports-table RLS cleanup migration above, pending go-ahead.
+6. Batch API's `maxDuration=300` needs a Vercel plan that honors it —
+   confirm current plan tier before advertising batch as a real feature.
+
 ## Architecture
 
 - Next.js 15 (App Router), TypeScript, Tailwind v4 (CSS-first config in
