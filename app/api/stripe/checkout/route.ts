@@ -62,6 +62,13 @@ export async function POST(request: Request) {
         subscription_data: { metadata: { planId: "prosumer", userId: user.id } },
         success_url: `${siteUrl}/dashboard?checkout=success`,
         cancel_url: `${siteUrl}/pricing?checkout=cancelled`,
+        // Managed Payments (Stripe's merchant-of-record option) is on by
+        // default for newer accounts and requires every product to carry a
+        // tax_code — ours don't, so checkout fails otherwise. Opting out
+        // reverts to standard (non-merchant-of-record) billing, same as
+        // most existing Stripe integrations. Revisit if/when the founder
+        // wants Stripe to handle tax remittance as a service.
+        managed_payments: { enabled: false },
       });
 
       return Response.json({ url: session.url });
@@ -116,6 +123,7 @@ export async function POST(request: Request) {
       subscription_data: { metadata: { planId: "team", userId: user.id, orgId } },
       success_url: `${siteUrl}/dashboard?checkout=success`,
       cancel_url: `${siteUrl}/pricing?checkout=cancelled`,
+      managed_payments: { enabled: false },
     });
 
     return Response.json({ url: session.url });
