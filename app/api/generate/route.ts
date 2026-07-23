@@ -1,8 +1,17 @@
 import OpenAI from "openai";
+import { PORTKEY_GATEWAY_URL } from "portkey-ai";
 import { buildValidationUserPrompt, VALIDATION_SYSTEM_PROMPT } from "@/lib/prompt";
 import { parseValidationReport } from "@/lib/parse-report";
-import { checkRateLimit } from "@/lib/rate-limit";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { createClient } from "@/lib/supabase/server";
+
+// The model id changes shape depending on how the request reaches Groq:
+// direct, it's the bare model name; through Portkey's gateway, it's
+// prefixed with the provider slug configured in Portkey's Model Catalog
+// (`@<slug>/<model>` — see the client/model setup in POST below). Kept as
+// one constant so it's obvious both paths point at the same underlying
+// model.
+const GROQ_MODEL = "openai/gpt-oss-120b";
 
 const MAX_IDEA_LENGTH = 500;
 
@@ -79,13 +88,6 @@ function friendlyErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Something went wrong while generating your report.";
 }
 
-function getClientIp(request: Request): string {
-  // Vercel/most proxies set this; falls back to a shared bucket if absent
-  // (e.g. running locally without a proxy in front).
-  const forwardedFor = request.headers.get("x-forwarded-for");
-  return forwardedFor?.split(",")[0]?.trim() || "unknown";
-}
-
 export async function POST(request: Request) {
   try {
     const ip = getClientIp(request);
@@ -116,18 +118,41 @@ export async function POST(request: Request) {
       );
     }
 
-    const apiKey = process.env.GROQ_API_KEY;
+    // Routes through Portkey's gateway when configured (gets fallback/
+    // caching config, cost tracking, and observability logging for free —
+    // see HANDOFF.md), otherwise falls back to calling Groq directly, same
+    // as before this integration. Deliberately not a hard requirement: a
+    // missing/misconfigured PORTKEY_API_KEY should degrade to "no gateway
+    // features" rather than take generation down entirely, same
+    // never-fail-closed-on-an-optional-integration pattern as Supabase
+    // elsewhere in this route.
+    const portkeyApiKey = process.env.PORTKEY_API_KEY;
+    const groqApiKey = process.env.GROQ_API_KEY;
 
-    if (!apiKey) {
+    let client: OpenAI;
+    let model: string;
+
+    if (portkeyApiKey) {
+      client = new OpenAI({ apiKey: portkeyApiKey, baseURL: PORTKEY_GATEWAY_URL });
+      // The slug is whatever you named the Groq credential when adding it
+      // to Portkey's Model Catalog (Settings -> Model Catalog -> AI
+      // Providers -> Add Provider -> Groq) — "groq" is Portkey's own
+      // example/default naming, not a hardcoded requirement, hence the
+      // env var override.
+      const slug = process.env.PORTKEY_GROQ_SLUG || "groq";
+      model = `@${slug}/${GROQ_MODEL}`;
+    } else if (groqApiKey) {
+      client = new OpenAI({ apiKey: groqApiKey, baseURL: "https://api.groq.com/openai/v1" });
+      model = GROQ_MODEL;
+    } else {
       return Response.json(
         {
-          error: "Groq API key is missing. Add GROQ_API_KEY to your .env.local file and restart the server.",
+          error:
+            "No AI provider is configured. Add PORTKEY_API_KEY (recommended) or GROQ_API_KEY to your .env.local file and restart the server.",
         },
         { status: 500 },
       );
     }
-
-    const client = new OpenAI({ apiKey, baseURL: "https://api.groq.com/openai/v1" });
 
     const generateStart = Date.now();
 
@@ -137,7 +162,7 @@ export async function POST(request: Request) {
     while (true) {
       try {
         completion = await client.chat.completions.create({
-          model: "openai/gpt-oss-120b",
+          model,
           messages: [
             { role: "system", content: VALIDATION_SYSTEM_PROMPT },
             { role: "user", content: buildValidationUserPrompt(idea) },
@@ -167,7 +192,9 @@ export async function POST(request: Request) {
       }
     }
 
-    console.log(`[generate] ${Date.now() - generateStart}ms, model=openai/gpt-oss-120b, retries=${attempt}`);
+    console.log(
+      `[generate] ${Date.now() - generateStart}ms, model=${model}, via=${portkeyApiKey ? "portkey" : "direct"}, retries=${attempt}`,
+    );
 
     // A truncated-but-still-valid-JSON response (the model hit its token
     // cap mid-report) isn't a hard failure — lib/parse-report.ts already
