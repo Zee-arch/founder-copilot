@@ -10,8 +10,18 @@ import { checkGenerateRateLimit, getClientIp } from "@/lib/rate-limit";
 // Vercel, which is exactly the gap this closes. Only applied to the one
 // route that actually costs money to call; every other request just gets
 // the existing session refresh.
+//
+// Signed-in only: this flat per-hour cap predates hybrid pricing's credit
+// system (see lib/entitlements.ts). Applying it to signed-in users too
+// would silently cap a paying Prosumer/Team subscriber at 8 requests/hour
+// regardless of the 30 or 150 credits/month they're actually paying for —
+// the credit balance check in app/api/generate/route.ts is the correct,
+// plan-aware throttle for a signed-in request, so this stays anonymous-
+// only, same reasoning as that route's own in-memory fallback.
 async function checkGenerateLimit(request: NextRequest, userId: string | null): Promise<NextResponse | null> {
-  const identity = userId ? ({ type: "user", id: userId } as const) : ({ type: "ip", id: getClientIp(request) } as const);
+  if (userId) return null;
+
+  const identity = { type: "ip", id: getClientIp(request) } as const;
 
   let result;
   try {

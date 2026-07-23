@@ -5,6 +5,9 @@ import { FolderOpen } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { SiteHeader } from "@/components/SiteHeader";
 import { DashboardReports, type ReportRow } from "@/components/dashboard/DashboardReports";
+import { BillingSummary } from "@/components/dashboard/BillingSummary";
+import { ApiKeysManager, type ApiKeyRow } from "@/components/dashboard/ApiKeysManager";
+import { getEntitlements } from "@/lib/entitlements";
 
 export const metadata: Metadata = {
   title: "Dashboard — FounderCopilot",
@@ -19,12 +22,38 @@ export default async function DashboardPage() {
 
   if (!user) redirect("/login?next=/dashboard");
 
-  const { data: reports, error } = await supabase
-    .from("reports")
-    .select("id, idea, report, created_at")
-    .order("created_at", { ascending: false });
+  const [{ data: reports, error }, entitlements] = await Promise.all([
+    supabase.from("reports").select("id, idea, report, created_at").order("created_at", { ascending: false }),
+    getEntitlements(user.id),
+  ]);
 
   const rows = (reports ?? []) as ReportRow[];
+
+  let hasStripeCustomer = false;
+  let apiKeys: ApiKeyRow[] = [];
+  let canManageApiKeys = false;
+
+  if (entitlements.source === "org") {
+    const [{ data: org }, { data: keys }, { data: membership }] = await Promise.all([
+      supabase.from("organizations").select("stripe_customer_id").eq("id", entitlements.orgId).maybeSingle(),
+      supabase
+        .from("api_keys")
+        .select("id, name, key_prefix, created_at, last_used_at, revoked_at")
+        .eq("org_id", entitlements.orgId)
+        .order("created_at", { ascending: false }),
+      supabase.from("organization_members").select("role").eq("org_id", entitlements.orgId).eq("user_id", user.id).maybeSingle(),
+    ]);
+    hasStripeCustomer = Boolean(org?.stripe_customer_id);
+    apiKeys = (keys ?? []) as ApiKeyRow[];
+    canManageApiKeys = membership?.role === "owner" || membership?.role === "admin";
+  } else {
+    const { data: billing } = await supabase
+      .from("user_billing")
+      .select("stripe_customer_id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    hasStripeCustomer = Boolean(billing?.stripe_customer_id);
+  }
 
   return (
     <div className="min-h-screen bg-paper text-slate-text">
@@ -33,6 +62,11 @@ export default async function DashboardPage() {
       <main className="mx-auto max-w-5xl px-6 py-12 sm:py-16">
         <p className="font-mono text-xs font-semibold uppercase tracking-wider text-brand">Dashboard</p>
         <h1 className="mt-2 font-display text-3xl text-slate-text">Your reports</h1>
+
+        <div className="mt-6 space-y-4">
+          <BillingSummary entitlements={entitlements} hasStripeCustomer={hasStripeCustomer} />
+          {entitlements.source === "org" && <ApiKeysManager initialKeys={apiKeys} canManage={canManageApiKeys} />}
+        </div>
 
         {error && (
           <div className="mt-8 rounded-2xl border border-signal-pivot/30 bg-signal-pivot-dim px-5 py-3 text-sm text-signal-pivot">

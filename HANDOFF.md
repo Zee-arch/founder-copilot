@@ -1033,6 +1033,112 @@ will keep working exactly as it does now (falls back to direct Groq +
 in-memory rate limiting, both unchanged and still functional) — it
 just won't be running through Portkey/Upstash until those are set.
 
+**2026-07-23: Hybrid pricing (free / Prosumer / Team-Accelerator /
+Enterprise) + Stripe billing foundation.** Founder's brief was actually
+three asks (pricing/billing, ongoing monitoring/re-validation with
+alerts, SSO+SOC2 groundwork) — scoped down with the founder first via
+clarifying questions to just the pricing/credits/Stripe foundation this
+session; monitoring and SSO/SOC2 are explicitly **not started**, see
+below.
+
+- **Plans** live in `lib/pricing.ts` — one file, easy to tune. Prices
+  ($0 / $39 / $249 / custom) and credit amounts (3 / 30 / 150 per month)
+  are a reasonable starting guess, not something the founder specified;
+  change them there, not scattered through the codebase.
+- **Data model** (`supabase/schema.sql`, appended, safe to re-run):
+  `user_billing` (solo free/prosumer plan + credits), `organizations` +
+  `organization_members` (Team/Enterprise, seats), `credit_ledger` (audit
+  trail), `api_keys` + `api_key_secrets` (split so the key hash never has
+  a select policy — service-role only), `stripe_webhook_events`
+  (idempotency). Credit consumption goes through
+  `consume_user_credit`/`consume_org_credit` Postgres functions
+  (`security definer`, with their own `auth.uid()` check inside) so two
+  concurrent requests can't both spend the last credit.
+- **Stripe**: `app/api/stripe/checkout`, `/portal`, `/webhook`. Webhook
+  handles `checkout.session.completed` (activate plan), `invoice.paid`
+  with `billing_reason=subscription_cycle` (monthly renewal — the
+  authoritative renewal path for paid plans; free-plan renewal is instead
+  a lazy check in `lib/entitlements.ts` since there's no Stripe
+  subscription to key off), and `customer.subscription.deleted` (fall
+  back to free plan). **Completely unverified against a real Stripe
+  account** — written and typechecked/build-passed, but no
+  `STRIPE_SECRET_KEY`/Price IDs exist anywhere yet, so zero real checkout
+  has been run. Founder needs to: create a Stripe account (test mode is
+  fine to start), create two recurring Prices (Prosumer $39/mo, Team
+  $249/mo) matching `lib/pricing.ts`, add the Price IDs +
+  `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` (+
+  `SUPABASE_SERVICE_ROLE_KEY`) to `.env.local` per the comments in
+  `.env.local.example`, then actually click through Subscribe once for
+  each paid plan before trusting this in production. Same "unverified
+  until a real key exists" pattern as every prior provider swap in this
+  log.
+- **Generation gating** (`app/api/generate/route.ts`, logic split out
+  into `lib/generate-report.ts` so the Team-tier API routes share the
+  exact same model call): signed-out stays IP-rate-limited (the
+  no-friction "free tier (lead-gen)" path, unchanged); signed-in users of
+  any plan now spend a credit via `lib/entitlements.ts` instead, with a
+  402 + upgrade message when they're out.
+- **Team tier extras**: `app/api/v1/validate` (single) and
+  `app/api/v1/batch` (up to 20 ideas, 4-way concurrency) — Bearer-API-key
+  authenticated (`lib/api-keys.ts`, `lib/api-auth.ts`), spend from the
+  org's pooled balance. Dashboard (`components/dashboard/ApiKeysManager.tsx`)
+  lets an org owner/admin mint/revoke keys, raw key shown exactly once.
+  **Batch's `maxDuration=300` only works on a Vercel plan that honors it
+  — Hobby hard-caps every function at 60s regardless**, so a real batch
+  of more than a few ideas will get killed on Hobby. Flagged in code
+  comments; founder needs a Pro-or-higher Vercel plan before selling
+  batch as a real Team-tier feature.
+- **Explicitly not built this pass** (per the founder's own scoping
+  answers): the monitoring/re-validation + alerts engine (chosen
+  definition: scheduled re-scoring of a saved report, alert on
+  score/verdict drift — not started, no cron/email infra exists yet);
+  SSO and SOC2 groundwork (founder's own stated trigger is "once you have
+  2-3 paying orgs asking for it," which hasn't happened). White-label
+  (Team tier) is schema-ready (`organizations.logo_url`) but **not**
+  wired into the report/PDF UI — pricing copy marks it "(coming soon)"
+  deliberately, per the "stay strict on data honesty" rule, rather than
+  advertising something that doesn't render yet.
+- Verified in a real browser (with fake-but-syntactically-valid Supabase
+  env vars, since no real project is configured in this worktree): the
+  `/pricing` page renders all 4 tiers with correct copy/CTAs at both
+  desktop and 375px mobile width, and the header's hamburger menu shows
+  the new "Pricing" link correctly. Did **not** verify: an actual signed-
+  in checkout/webhook/credit-consumption round trip (needs a real Stripe
+  + Supabase project), or the dashboard's billing/API-key UI with a real
+  session.
+
+**Merge note (2026-07-23): reconciled against PR #7 (Portkey + Upstash,
+above) before merging this branch to `main`.** Real conflicts, not just
+textual — resolved deliberately rather than picking one side blindly:
+
+- `lib/generate-report.ts` (this branch's shared helper, used by
+  `/api/generate` and the new `/api/v1/*` routes) gained PR #7's
+  Portkey-gateway-with-direct-Groq-fallback client/model selection, so
+  all three generation entry points get gateway/observability benefits
+  consistently instead of the web route having it and the API routes
+  not.
+- **Found and fixed a real product-logic conflict, not just a merge
+  conflict**: PR #7's `middleware.ts` applied its Upstash rate limit
+  (8 req/hour) to signed-in users too, keyed by user id. Left as-is,
+  that would silently cap a paying Prosumer/Team subscriber at 8
+  requests/hour regardless of the 30 or 150 credits/month they're
+  actually paying for — the two features were built independently and
+  never reasoned about each other. Fixed by scoping that middleware
+  check to anonymous requests only (`middleware.ts`); a signed-in
+  request's real throttle is now exclusively the credit balance check
+  in `app/api/generate/route.ts`. Anonymous behavior (IP-based, 8/hour)
+  is unchanged.
+- `app/api/generate/route.ts` itself: kept this branch's structure
+  (credit-gating for signed-in, IP rate limit for anonymous, thin route
+  calling `lib/generate-report.ts`) rather than PR #7's version, which
+  had the Portkey logic inlined directly in the route — consolidating it
+  into the shared helper (previous bullet) was the actual reconciliation,
+  not a place where one side's route logic just overwrote the other's.
+
+Not yet re-verified live after this merge — same "unverified until
+proven" status as the rest of this entry until a real generation is run
+against Portkey/Upstash on this exact merged code.
+
 ## Architecture
 
 - Next.js 15 (App Router), TypeScript, Tailwind v4 (CSS-first config in
@@ -1378,6 +1484,21 @@ decided — weigh it against the "no login" v1 spec above before assuming
 it's wanted.
 
 ## Immediate next steps (discussed, not yet done)
+
+**Added 2026-07-23, highest priority right now:** the hybrid pricing/
+billing foundation (see the 2026-07-23 status log entry above) is
+written and typechecks/builds clean but has never touched a real Stripe
+account. Before trusting it: (1) founder creates a Stripe account +
+two recurring Prices + adds `STRIPE_SECRET_KEY`/`STRIPE_WEBHOOK_SECRET`/
+Price IDs/`SUPABASE_SERVICE_ROLE_KEY` to `.env.local` (and Vercel's env
+vars once ready to deploy) per `.env.local.example`'s comments, (2) run
+`supabase/schema.sql` in the Supabase SQL editor (it's additive/
+idempotent — safe even though `reports` already exists live), (3) click
+through a real Prosumer subscribe and a real Team subscribe end-to-end,
+confirm the webhook actually fires (Stripe's dashboard shows delivery
+attempts) and credits show up on `/dashboard`. Only then is this
+"verified," same standard as every other provider swap in this file —
+don't skip straight to calling it done just because it built.
 
 1. **Founder: verify search grounding for real, once Gemini quota resets**
    — this is the most important open item. Run a real generation, confirm
