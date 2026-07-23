@@ -295,3 +295,270 @@ $$;
 
 revoke execute on function consume_org_credit_for_api_key(uuid) from public;
 revoke execute on function consume_org_credit_for_api_key(uuid) from authenticated;
+
+-- ---------------------------------------------------------------------
+-- Org/team dashboard (added 2026-07-24): extends `organizations`/
+-- `organization_members` above with the piece they were missing — a way
+-- for a second person to actually join an org. Right now the only path
+-- into `organization_members` is the Stripe checkout route creating the
+-- buyer as sole owner; there was no invite mechanism at all. This adds
+-- one (shareable join links, not email-delivery-dependent — this
+-- project's free-tier email sender only delivers to its own registered
+-- address), plus a `profiles` table and `reports.org_id` so an org's
+-- members can actually see each other's validation reports on a shared
+-- cohort dashboard — until now, Team pooled credits/seats but never made
+-- reports visible to teammates.
+--
+-- Deliberately does NOT add a self-serve "create org" path — org
+-- creation stays exclusively tied to Stripe Team-plan checkout, matching
+-- the existing design; this only adds invites *into* an org that already
+-- exists. Safe to re-run in full, same as the rest of this file.
+-- ---------------------------------------------------------------------
+
+-- One row per auth user, readable by org-mates — needed because
+-- `auth.users` itself isn't readable across users under RLS, but the
+-- cohort dashboard needs to show "whose idea is this" to teammates.
+create table if not exists profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  email text not null,
+  display_name text,
+  created_at timestamptz not null default now()
+);
+
+alter table profiles enable row level security;
+
+drop policy if exists "users can read their own or org-mates' profile" on profiles;
+create policy "users can read their own or org-mates' profile"
+  on profiles for select
+  using (
+    (select auth.uid()) = id
+    or exists (
+      select 1 from organization_members mine
+      join organization_members theirs on theirs.org_id = mine.org_id
+      where mine.user_id = (select auth.uid()) and theirs.user_id = profiles.id
+    )
+  );
+
+drop policy if exists "users can update their own profile" on profiles;
+create policy "users can update their own profile"
+  on profiles for update
+  using ((select auth.uid()) = id);
+
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
+begin
+  insert into public.profiles (id, email, display_name)
+  values (new.id, new.email, coalesce(new.raw_user_meta_data->>'full_name', new.email))
+  on conflict (id) do nothing;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute function public.handle_new_user();
+
+-- Backfill any users created before this section existed.
+insert into public.profiles (id, email, display_name)
+select id, email, coalesce(raw_user_meta_data->>'full_name', email)
+from auth.users
+on conflict (id) do nothing;
+
+-- Helper functions used by RLS policies below — SECURITY DEFINER so they
+-- run once and bypass organization_members' own RLS (avoids the
+-- self-recursion a policy calling back into its own table's RLS would
+-- hit). Not granted to anon/public — see the revokes below.
+create or replace function public.is_org_member(target_org_id uuid)
+returns boolean
+language sql
+security definer
+stable
+set search_path = public
+as $$
+  select exists (
+    select 1 from organization_members
+    where org_id = target_org_id and user_id = (select auth.uid())
+  );
+$$;
+
+create or replace function public.org_role(target_org_id uuid)
+returns text
+language sql
+security definer
+stable
+set search_path = public
+as $$
+  select role from organization_members
+  where org_id = target_org_id and user_id = (select auth.uid());
+$$;
+
+revoke execute on function public.is_org_member(uuid) from public;
+revoke execute on function public.is_org_member(uuid) from anon;
+revoke execute on function public.org_role(uuid) from public;
+revoke execute on function public.org_role(uuid) from anon;
+grant execute on function public.is_org_member(uuid) to authenticated;
+grant execute on function public.org_role(uuid) to authenticated;
+
+-- The Billing section above defined "org members can read their org"/
+-- "...membership roster" using a raw subquery on organization_members
+-- from within organization_members' own policy — a direct RLS
+-- self-recursion Postgres rejects at query time (org_id in (select
+-- org_id from organization_members where ...) evaluated as part of
+-- organization_members' own SELECT policy). This would have fired the
+-- moment any signed-in Team user's dashboard queried their own
+-- membership row. Re-defined here now that is_org_member() exists to
+-- avoid it (SECURITY DEFINER, runs once, bypasses the table's own RLS
+-- instead of re-triggering it).
+drop policy if exists "org members can read their org" on organizations;
+create policy "org members can read their org"
+  on organizations for select
+  using (public.is_org_member(id));
+
+drop policy if exists "org members can read their membership roster" on organization_members;
+create policy "org members can read their membership roster"
+  on organization_members for select
+  using (public.is_org_member(org_id));
+
+-- No insert policy on organization_members — member creation happens
+-- only via the checkout route (service-role) or accept_org_invite below
+-- (security definer), by design. These two cover role management and
+-- leaving/removal, neither of which existed before.
+drop policy if exists "owners/admins can change a member's role" on organization_members;
+create policy "owners/admins can change a member's role"
+  on organization_members for update
+  using (public.org_role(org_id) in ('owner', 'admin'));
+
+drop policy if exists "members can leave, owners/admins can remove members" on organization_members;
+create policy "members can leave, owners/admins can remove members"
+  on organization_members for delete
+  using (user_id = (select auth.uid()) or public.org_role(org_id) in ('owner', 'admin'));
+
+create index if not exists organization_members_user_id_idx on organization_members(user_id);
+
+-- A user belonging to more than one org isn't a supported case (see
+-- lib/entitlements.ts) — this is the real backstop for that assumption,
+-- since accept_org_invite below is the first path into
+-- organization_members besides checkout, and checkout alone could never
+-- have produced a double-membership.
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'organization_members_user_id_key') then
+    alter table organization_members add constraint organization_members_user_id_key unique (user_id);
+  end if;
+end $$;
+
+create table if not exists org_invites (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references organizations(id) on delete cascade,
+  email text not null,
+  role text not null default 'member' check (role in ('admin', 'member')),
+  token uuid not null default gen_random_uuid() unique,
+  invited_by uuid not null references auth.users(id),
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null default (now() + interval '14 days'),
+  accepted_at timestamptz
+);
+
+alter table org_invites enable row level security;
+
+drop policy if exists "owners/admins can view their org's invites" on org_invites;
+create policy "owners/admins can view their org's invites"
+  on org_invites for select
+  using (public.org_role(org_id) in ('owner', 'admin'));
+
+drop policy if exists "owners/admins can create invites" on org_invites;
+create policy "owners/admins can create invites"
+  on org_invites for insert
+  with check (public.org_role(org_id) in ('owner', 'admin') and invited_by = (select auth.uid()));
+
+drop policy if exists "owners/admins can revoke invites" on org_invites;
+create policy "owners/admins can revoke invites"
+  on org_invites for delete
+  using (public.org_role(org_id) in ('owner', 'admin'));
+
+create index if not exists org_invites_invited_by_idx on org_invites(invited_by);
+create index if not exists org_invites_org_id_idx on org_invites(org_id);
+
+-- A non-member can't read org_invites (RLS above is owner/admin-only) but
+-- the accept-invite page still needs to show "this invite was sent to X
+-- for team Y" before accepting — the token itself is the capability (an
+-- unguessable random uuid, same trust model as a password-reset link).
+create or replace function public.get_invite_preview(invite_token uuid)
+returns table (org_name text, email text, role text, valid boolean)
+language sql
+security definer
+stable
+set search_path = public
+as $$
+  select o.name, i.email, i.role, (i.accepted_at is null and i.expires_at > now())
+  from org_invites i
+  join organizations o on o.id = i.org_id
+  where i.token = invite_token;
+$$;
+
+revoke execute on function public.get_invite_preview(uuid) from public;
+revoke execute on function public.get_invite_preview(uuid) from anon;
+grant execute on function public.get_invite_preview(uuid) to authenticated;
+
+create or replace function public.accept_org_invite(invite_token uuid)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  inv record;
+  my_email text;
+begin
+  select * into inv
+  from org_invites
+  where token = invite_token and accepted_at is null and expires_at > now();
+
+  if not found then
+    raise exception 'This invite link is invalid or has expired.';
+  end if;
+
+  select email into my_email from auth.users where id = auth.uid();
+
+  if my_email is null or lower(my_email) <> lower(inv.email) then
+    raise exception 'This invite was sent to a different email address.';
+  end if;
+
+  if exists (select 1 from organization_members where user_id = auth.uid()) then
+    raise exception 'You''re already part of a team — leave it before accepting a different invite.';
+  end if;
+
+  insert into organization_members (org_id, user_id, role)
+  values (inv.org_id, auth.uid(), inv.role)
+  on conflict (org_id, user_id) do nothing;
+
+  update org_invites set accepted_at = now() where id = inv.id;
+
+  return inv.org_id;
+end;
+$$;
+
+revoke execute on function public.accept_org_invite(uuid) from public;
+revoke execute on function public.accept_org_invite(uuid) from anon;
+grant execute on function public.accept_org_invite(uuid) to authenticated;
+
+alter table reports add column if not exists org_id uuid references organizations(id) on delete set null;
+
+create index if not exists reports_org_id_idx on reports(org_id);
+create index if not exists reports_user_id_idx on reports(user_id);
+
+drop policy if exists "users can read their own reports" on reports;
+drop policy if exists "users can read their own or their org's reports" on reports;
+create policy "users can read their own or their org's reports"
+  on reports for select
+  using ((select auth.uid()) = user_id or public.is_org_member(org_id));
+
+drop policy if exists "users can insert their own reports" on reports;
+drop policy if exists "users can insert their own reports, optionally into their org" on reports;
+create policy "users can insert their own reports, optionally into their org"
+  on reports for insert
+  with check ((select auth.uid()) = user_id and (org_id is null or public.is_org_member(org_id)));

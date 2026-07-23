@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { FolderOpen } from "lucide-react";
+import { FolderOpen, Settings, Users } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { SiteHeader } from "@/components/SiteHeader";
 import { DashboardReports, type ReportRow } from "@/components/dashboard/DashboardReports";
@@ -22,8 +22,17 @@ export default async function DashboardPage() {
 
   if (!user) redirect("/login?next=/dashboard");
 
+  // `.is("org_id", null)` scopes this to reports generated outside a Team
+  // org — once RLS also lets org-mates read each other's org-tagged
+  // reports (for the cohort dashboard), an unfiltered query here would mix
+  // teammates' reports into what's presented as "your reports." Org-tagged
+  // reports live on the cohort dashboard (/dashboard/org/[orgId]) instead.
   const [{ data: reports, error }, entitlements] = await Promise.all([
-    supabase.from("reports").select("id, idea, report, created_at").order("created_at", { ascending: false }),
+    supabase
+      .from("reports")
+      .select("id, idea, report, created_at")
+      .is("org_id", null)
+      .order("created_at", { ascending: false }),
     getEntitlements(user.id),
   ]);
 
@@ -32,10 +41,11 @@ export default async function DashboardPage() {
   let hasStripeCustomer = false;
   let apiKeys: ApiKeyRow[] = [];
   let canManageApiKeys = false;
+  let orgName: string | null = null;
 
   if (entitlements.source === "org") {
     const [{ data: org }, { data: keys }, { data: membership }] = await Promise.all([
-      supabase.from("organizations").select("stripe_customer_id").eq("id", entitlements.orgId).maybeSingle(),
+      supabase.from("organizations").select("name, stripe_customer_id").eq("id", entitlements.orgId).maybeSingle(),
       supabase
         .from("api_keys")
         .select("id, name, key_prefix, created_at, last_used_at, revoked_at")
@@ -44,6 +54,7 @@ export default async function DashboardPage() {
       supabase.from("organization_members").select("role").eq("org_id", entitlements.orgId).eq("user_id", user.id).maybeSingle(),
     ]);
     hasStripeCustomer = Boolean(org?.stripe_customer_id);
+    orgName = org?.name ?? entitlements.orgName;
     apiKeys = (keys ?? []) as ApiKeyRow[];
     canManageApiKeys = membership?.role === "owner" || membership?.role === "admin";
   } else {
@@ -65,6 +76,29 @@ export default async function DashboardPage() {
 
         <div className="mt-6 space-y-4">
           <BillingSummary entitlements={entitlements} hasStripeCustomer={hasStripeCustomer} />
+          {entitlements.source === "org" && (
+            <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 py-3">
+              <Users className="h-4 w-4 text-brand" />
+              <span className="text-sm text-slate-600">
+                You&apos;re on <span className="font-medium text-slate-900">{orgName}</span>&apos;s team.
+              </span>
+              <Link
+                href={`/dashboard/org/${entitlements.orgId}`}
+                className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-slate-200 px-4 py-1.5 text-xs font-medium text-slate-600 transition hover:border-brand/40 hover:text-slate-900"
+              >
+                Team dashboard
+              </Link>
+              {canManageApiKeys && (
+                <Link
+                  href={`/dashboard/org/${entitlements.orgId}/settings`}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 px-4 py-1.5 text-xs font-medium text-slate-600 transition hover:border-brand/40 hover:text-slate-900"
+                >
+                  <Settings className="h-3.5 w-3.5" />
+                  Team settings
+                </Link>
+              )}
+            </div>
+          )}
           {entitlements.source === "org" && <ApiKeysManager initialKeys={apiKeys} canManage={canManageApiKeys} />}
         </div>
 

@@ -22,6 +22,15 @@ export async function POST(request: Request) {
       data: { user },
     } = await supabase.auth.getUser();
 
+    // Tracks which org (if any) this generation belongs to, so the report
+    // insert below can tag it — resolved from consumeCredit's own
+    // entitlements lookup rather than a second DB round-trip. A Team-org
+    // member has at most one org right now (see lib/entitlements.ts), so
+    // there's no per-generation choice to make: every report a Team member
+    // generates belongs to their org and is visible to their teammates on
+    // the cohort dashboard.
+    let orgId: string | null = null;
+
     // Signed-out generation is the "free tier (lead-gen)" experience — no
     // signup required, gated only by IP so it stays a genuine no-friction
     // try-before-you-buy path (middleware.ts also enforces a durable,
@@ -62,6 +71,7 @@ export async function POST(request: Request) {
           { status: 402 },
         );
       }
+      if (entitlements.source === "org") orgId = entitlements.orgId;
     }
 
     const body = (await request.json()) as { idea?: string };
@@ -85,7 +95,9 @@ export async function POST(request: Request) {
     // should never turn into a failed response.
     if (user) {
       try {
-        const { error: insertError } = await supabase.from("reports").insert({ user_id: user.id, idea, report });
+        const { error: insertError } = await supabase
+          .from("reports")
+          .insert({ user_id: user.id, idea, report, org_id: orgId });
         if (insertError) {
           console.error("[generate] failed to save report:", insertError.message);
         }
