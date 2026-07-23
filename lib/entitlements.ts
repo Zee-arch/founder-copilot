@@ -118,9 +118,23 @@ async function findOrgMembership(
 
   const { data: org } = await supabase
     .from("organizations")
-    .select("id, name, plan, credits_balance")
+    .select("id, name, plan, credits_balance, stripe_subscription_id")
     .eq("id", membership.org_id)
     .maybeSingle();
+
+  if (!org) return null;
+
+  // The checkout route creates the org (and this membership) the moment
+  // someone clicks "Start Team plan" — before Stripe payment happens —
+  // so it has something to attach the subscription to once the webhook
+  // fires (see app/api/stripe/checkout/route.ts). If checkout was ever
+  // abandoned or failed, that leaves a real, permanent org membership
+  // with no completed payment behind. Without this check, being a member
+  // of that empty shell would permanently shadow a person's real, paid
+  // user_billing plan (e.g. Prosumer) — confirmed live: a stray
+  // never-paid Team org hid an actually-successful Prosumer subscription
+  // entirely. Only an org with a completed Stripe subscription counts.
+  if (!org.stripe_subscription_id) return null;
 
   return org as { id: string; name: string; plan: "team" | "enterprise"; credits_balance: number } | null;
 }
