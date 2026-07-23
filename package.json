@@ -18,7 +18,8 @@
     "openai": "^6.48.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "recharts": "^3.9.2"
+    "recharts": "^3.9.2",
+    "stripe": "^22.3.2"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.1",
