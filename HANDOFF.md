@@ -979,19 +979,59 @@ the founder before writing any code rather than implemented blindly:
    means even a genuine Edge-runtime failure here would fail open, not
    break the app.
 
-**Not yet live-verified — blocked on the founder creating two
-accounts**, same pattern as every provider swap in this project: I
-cannot create third-party accounts or enter API keys into their
-dashboards. Needed: a Portkey account + a Groq provider added to its
-Model Catalog (gets `PORTKEY_API_KEY`, confirms the slug for
-`PORTKEY_GROQ_SLUG`), and an Upstash Redis database (REST API, not a
-connection string — gets `UPSTASH_REDIS_REST_URL` +
-`UPSTASH_REDIS_REST_TOKEN`). `.env.local.example` documents both.
-**Verified so far**: `npx tsc --noEmit` and `npx eslint` clean, a full
-`next build` succeeds (the one warning covered in point 3), and a real
-local generation succeeded end-to-end through the fallback path (no
-Portkey/Upstash configured) — confirming this change didn't regress the
-working Groq path while the new pieces wait on real credentials.
+**2026-07-23 (later same day): live-verified after the founder created
+both accounts — one real bug found and fixed on the way, both pieces
+now confirmed working against real infrastructure, not just typechecked.**
+
+**Portkey initially failed with a real, specific error, not a vague
+one**: `{"status":"failure","message":"Following keys are not valid:
+groq"}` — a 400 with a real body this time (unlike the empty-body 400
+first seen locally, which turned out to be the OpenAI SDK swallowing
+this exact JSON error message; diagnosed by bypassing the SDK entirely
+and hitting Portkey's endpoint with a raw `fetch()` script, same
+technique used for every other provider issue this session). Root
+cause: `PORTKEY_GROQ_SLUG` defaulted to `"groq"` in `.env.local.example`,
+but Portkey's Model Catalog auto-names a newly added provider after
+your Portkey username unless you override it — the founder's actual
+slug came out as `zaeem-ather`, not `groq`. No code fix needed, just
+setting `PORTKEY_GROQ_SLUG=zaeem-ather` in `.env.local` (not a secret,
+just a routing label, so this one was fine to set directly rather than
+asking the founder to type it in). Confirmed via the same raw-fetch
+script that the corrected slug resolves and returns a real completion
+with `"provider":"groq"` in the response, then confirmed again through
+the actual app: `[generate] ... model=@zaeem-ather/openai/gpt-oss-120b,
+via=portkey` in the server logs, and a full real report (category
+"Marketplace" correctly emphasizing network effects) rendered
+end-to-end in the UI.
+
+**Upstash rate limiting was verified independently of the app
+entirely** — a standalone script called `checkGenerateRateLimit`'s
+underlying `Ratelimit`/`Redis` setup directly against the founder's
+real database with a fixed test identity, 10 times in a row: the first
+8 succeeded (`remaining` counting down 7→0), the 9th and 10th were
+correctly rejected (`success: false`). This proves the actual Redis-
+backed mechanism works, decoupled from whether the app happens to be
+sending traffic through it correctly — a stronger test than driving it
+through 8+ real (and costly) generations via the UI would have been.
+
+Both `PORTKEY_GROQ_SLUG`'s wrong default and the SDK's error-swallowing
+are worth remembering if this ever needs debugging again: **the OpenAI
+SDK's thrown `Error.message` for a Portkey/Groq 400 can read as
+"(no body)" even when the upstream actually returned a real, useful
+JSON error** — don't trust that message at face value; go around the
+SDK with a raw `fetch()` to the same endpoint/headers if a 400 shows up
+with no obvious cause.
+
+**Merged as PR #7** (`gh pr merge 7 --merge`) once both pieces were
+confirmed working locally. **Still needed before this is live on
+Vercel**: the same four env vars (`PORTKEY_API_KEY`,
+`PORTKEY_GROQ_SLUG=zaeem-ather`, `UPSTASH_REDIS_REST_URL`,
+`UPSTASH_REDIS_REST_TOKEN`) added to Vercel's Production environment —
+same `GROQ_API_Key` casing-typo lesson from two entries up applies
+here: get the exact names right. Until they're added there, production
+will keep working exactly as it does now (falls back to direct Groq +
+in-memory rate limiting, both unchanged and still functional) — it
+just won't be running through Portkey/Upstash until those are set.
 
 ## Architecture
 
