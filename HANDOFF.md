@@ -869,13 +869,139 @@ this app's own code, same verification technique used earlier this
 session for Gemini and for the dashboard comparison feature — never
 part of the shipped feature.
 
+**2026-07-22 (same day, later still): PR #6 rewritten and merged —
+GitHub `main` and Vercel production brought fully current for the first
+time since the auth-foundation branch fell nine commits behind.** PR #6
+had sat open since 2026-07-21 titled "Restore web search grounding,"
+explicitly marked "do not merge until checked," and predated everything
+above it in this log (category classification, Customer Validation,
+Build Brief, dashboard comparison, mobile fixes, the entire Gemini→Groq
+swap). Rewrote the title/description to describe what's actually on the
+branch, updated the test-plan checklist to reflect the live verification
+already done in this session, and merged (`gh pr merge 6 --merge`,
+commit `f65d182`) — a manual merge commit, matching every prior PR on
+this repo, not a squash.
+
+**Vercel auto-deployed from the merge, but production still failed with
+"Groq API key is missing" even though the new code (Validate/Build
+Brief in the nav) was confirmed live.** Found via screenshots of the
+founder's own Vercel dashboard, not guessed: the environment variable
+was saved as `GROQ_API_Key`, not `GROQ_API_KEY` — env var names are
+case-sensitive, so `process.env.GROQ_API_KEY` in the route never found
+it, despite the variable being correctly scoped to Production and
+Preview and every other part of the Vercel setup (deployment history,
+build, `main` branch pointer) being right. Founder fixed the name and
+redeployed. **Confirmed live on the actual production domain**
+afterward with a real generation ("A curated marketplace for handmade
+furniture from independent woodworkers") — Build Brief specifically
+checked since that was the field the earlier truncation bug hit.
+
+**2026-07-23: Portkey gateway + Upstash-backed rate limiting added,
+following a 4-item infra list the founder brought in from outside
+research.** Two items from that list didn't survive first contact with
+either this project's actual state or fresh research, both surfaced to
+the founder before writing any code rather than implemented blindly:
+
+- **Item 2 (Gemini explicit/implicit context caching) was shelved
+  entirely** — the app runs on Groq, not Gemini (see the 2026-07-22
+  entries above), and Groq's LPU inference stack has no equivalent
+  caching API. Implementing Gemini-specific caching against a provider
+  not in use would have been pure waste. Founder agreed to shelve it;
+  revisit only if the app ever actually moves to Gemini.
+- **Item 1's suggested tool (Helicone) turned out to be a real risk,
+  found via live research, not assumed**: Helicone was acquired by
+  Mintlify in March 2026 and is in maintenance mode (security/bug fixes
+  only, no new features) — multiple independent 2026 sources are
+  specifically about migrating *off* Helicone. Picking a tool the
+  ecosystem is actively leaving would have worked against the founder's
+  own stated goal (de-risking provider infrastructure). Switched the
+  recommendation to **Portkey** instead — actively developed, does the
+  same gateway+observability job. Worth knowing: Portkey itself has a
+  pending acquisition (Palo Alto Networks, announced April 2026,
+  expected to close around Palo Alto's fiscal Q4 2026/July 2026) — flagged
+  to the founder as a lower-severity, forward-looking risk (not a
+  confirmed maintenance-mode situation like Helicone, and the gateway
+  is open source, so self-hosting is a fallback if it ever comes to
+  that), not treated as a blocker.
+
+**What changed, item by item:**
+
+1. **Provider gateway (`app/api/generate/route.ts`)** — routes through
+   Portkey's OpenAI-compatible gateway (`PORTKEY_GATEWAY_URL` from the
+   `portkey-ai` package) when `PORTKEY_API_KEY` is set, using the model
+   string `@<slug>/openai/gpt-oss-120b` (the slug is whatever the Groq
+   credential is named in Portkey's Model Catalog — configurable via
+   `PORTKEY_GROQ_SLUG`, defaults to `"groq"`). **Deliberately falls back
+   to calling Groq directly** (the pre-existing `GROQ_API_KEY` path,
+   unchanged) if `PORTKEY_API_KEY` isn't set — same
+   never-fail-closed-on-an-optional-integration pattern as Supabase
+   elsewhere in this route, and specifically so production doesn't break
+   the moment this deploys, before the founder has set up a Portkey
+   account (learned the hard way from the `GROQ_API_Key` casing incident
+   two entries up — don't ship a hard dependency on a not-yet-configured
+   external service). All existing retry/backoff/`reasoning_effort`
+   logic is untouched and applies through either path.
+2. **Durable rate limiting (`middleware.ts`, `lib/rate-limit.ts`)** —
+   `lib/rate-limit.ts`'s own comment already flagged this exact upgrade
+   path ("if you outgrow 'me and some friends,' swap this for a shared
+   store"). New `checkGenerateRateLimit()` uses `@upstash/ratelimit` +
+   `@upstash/redis` (REST/HTTP-based, which is what makes it usable in
+   Next.js Edge Middleware at all — a normal TCP Redis client can't run
+   there) and is enforced in `middleware.ts`, in front of
+   `/api/generate`, so an abusive request is rejected before it ever
+   reaches the Node function or spends a Groq/Portkey token. **Two
+   independent limiters, not one shared bucket**: a signed-in request is
+   limited by Supabase user id (fair to people behind a shared
+   office/CGNAT IP — `lib/supabase/middleware.ts`'s `updateSession` now
+   also returns the user id, which it was already fetching for
+   session-refresh purposes), an anonymous request is limited by IP.
+   Both default to 8 req/hour, matching the existing in-memory limiter's
+   value — not chosen arbitrarily, chosen for continuity. **Deliberately
+   optional and fails open, not closed, on two different axes**: if
+   `UPSTASH_REDIS_REST_URL`/`TOKEN` aren't set, `checkGenerateRateLimit`
+   returns `null` and middleware falls through to the route's existing
+   in-memory `checkRateLimit` (unchanged, still there) rather than
+   blocking every request; if Upstash IS configured but a real call to
+   it throws (network hiccup, outage), middleware catches that and lets
+   the request through rather than taking down report generation over a
+   third-party blip.
+3. **A build-time warning, investigated rather than ignored or
+   silenced**: `next build` warns that `@upstash/redis`'s default import
+   touches `process.version`, a Node API unsupported in Edge Runtime.
+   Traced to a resolved 2023 GitHub issue (`upstash/upstash-redis#333`)
+   — the exact `import { Redis } from "@upstash/redis"` pattern used
+   here is Upstash's own example `middleware.ts` and was confirmed
+   working in both local and production Next.js Edge Middleware by the
+   library's own maintainers; the warning is a benign version-detection
+   code path that doesn't execute at actual request time. Not silenced
+   or worked around — documented here so it isn't mistaken for a real
+   problem later, and because the defensive try/catch in point 2 above
+   means even a genuine Edge-runtime failure here would fail open, not
+   break the app.
+
+**Not yet live-verified — blocked on the founder creating two
+accounts**, same pattern as every provider swap in this project: I
+cannot create third-party accounts or enter API keys into their
+dashboards. Needed: a Portkey account + a Groq provider added to its
+Model Catalog (gets `PORTKEY_API_KEY`, confirms the slug for
+`PORTKEY_GROQ_SLUG`), and an Upstash Redis database (REST API, not a
+connection string — gets `UPSTASH_REDIS_REST_URL` +
+`UPSTASH_REDIS_REST_TOKEN`). `.env.local.example` documents both.
+**Verified so far**: `npx tsc --noEmit` and `npx eslint` clean, a full
+`next build` succeeds (the one warning covered in point 3), and a real
+local generation succeeded end-to-end through the fallback path (no
+Portkey/Upstash configured) — confirming this change didn't regress the
+working Groq path while the new pieces wait on real credentials.
+
 ## Architecture
 
 - Next.js 15 (App Router), TypeScript, Tailwind v4 (CSS-first config in
   `app/globals.css` via `@theme`, not a `tailwind.config.js`)
 - One API route: `app/api/generate/route.ts` — calls the model (currently
-  Gemini, see status log), rate-limits by IP, validates input length,
-  returns the parsed report
+  Groq, optionally through Portkey's gateway, see status log), rate-limits
+  by IP/user via `middleware.ts` (Upstash-backed, falls back to
+  route-level in-memory), validates input length, returns the parsed
+  report
 - `lib/prompt.ts` — the system prompt, requests a specific JSON shape
 - `lib/parse-report.ts` — defensively parses and validates the model's
   JSON, provider-agnostic by design. **Important**: it computes
@@ -1066,24 +1192,39 @@ part of the shipped feature.
 
 ## Decisions worth knowing before you change them
 
-- **Model**: `gemini-3.5-flash` via `@google/genai`, as of 2026-07-21 — a
-  deliberate, temporary, cost-driven swap off Claude while iterating on
-  features (see status log). **Web search grounding is back on as of
-  2026-07-22** via Gemini's own `googleSearch` tool (5,000 free grounded
-  prompts/month — see that status log entry for the full pricing
-  comparison against reverting to Claude). Verify the model name is still
-  current/free-tier before assuming it (check
-  ai.google.dev/gemini-api/docs/pricing), and don't assume this is the
-  final provider choice — the founder wants to re-compare Claude/Gemini/
-  others on actual output quality once the product is feature-complete.
-  Because `googleSearch` and `responseMimeType: "application/json"` can't
-  be combined, the route no longer uses native JSON mode — it relies on
-  the prompt instruction + `parse-report.ts`'s defensive parser, same as
-  the original Claude version always did.
-- **Rate limiting** (`lib/rate-limit.ts`): in-memory, per-IP, 8 req/hour.
-  Deliberately basic — fine for friends testing, NOT durable on serverless
-  (resets on cold start) or across multiple instances. If this gets real
-  traffic, swap for a shared store (e.g. Upstash Redis) before relying on it.
+- **Model**: `openai/gpt-oss-120b` on **Groq**, as of 2026-07-22 (not
+  Gemini — this bullet was stale for a day, don't trust it blindly
+  either, always check `app/api/generate/route.ts` directly). A
+  deliberate, temporary, testing-reliability-driven swap off Gemini
+  (whose free tier was persistently overloaded — see status log), not a
+  quality decision. **No search grounding on this provider** — an
+  open-weight model behind Groq has no live web access, so `sources` is
+  always `[]` and every UI claim that depended on grounding was reworded
+  (see the 2026-07-22 Groq-swap entry). `reasoning_effort: "low"` is
+  load-bearing, not cosmetic — without it, this reasoning model burns
+  enough hidden completion tokens that real reports were coming back
+  with `buildBrief` truncated (see that entry's follow-up bug-fix
+  entry). As of 2026-07-23, requests route through **Portkey's gateway**
+  when `PORTKEY_API_KEY` is set, falling back to calling Groq directly
+  otherwise — don't assume Portkey is definitely configured in any given
+  environment, check both env vars. Don't assume any of this is the
+  final provider choice — the founder still wants to re-compare
+  Claude/Gemini/Groq/others on actual output quality once the product is
+  feature-complete.
+- **Rate limiting**: two layers now, not one. `middleware.ts` enforces a
+  durable, Upstash Redis-backed limit (`lib/rate-limit.ts`'s
+  `checkGenerateRateLimit`) in front of `/api/generate` — per-user id
+  when signed in, per-IP when anonymous, 8 req/hour each — added
+  2026-07-23 specifically because the layer below was never durable.
+  `app/api/generate/route.ts`'s own in-memory `checkRateLimit` (per-IP,
+  8 req/hour) is still there underneath, unchanged, and still NOT
+  durable on serverless (resets on cold start/across instances) — it's
+  now the fallback for when Upstash isn't configured (or has a
+  transient failure; middleware fails open on that, not closed), not
+  the primary defense. If Upstash's env vars are missing, generation
+  still works, it just isn't durably rate-limited — check
+  `UPSTASH_REDIS_REST_URL`/`TOKEN` before assuming the durable path is
+  actually active in a given environment.
 - **PDF export is screenshot-based**, not a true text PDF. It photographs
   the rendered report (html2canvas-pro) and places that image into a PDF
   (jsPDF). Looks right, but text inside isn't selectable/searchable. A real
