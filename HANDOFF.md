@@ -1135,9 +1135,17 @@ textual — resolved deliberately rather than picking one side blindly:
   into the shared helper (previous bullet) was the actual reconciliation,
   not a place where one side's route logic just overwrote the other's.
 
-Not yet re-verified live after this merge — same "unverified until
-proven" status as the rest of this entry until a real generation is run
-against Portkey/Upstash on this exact merged code.
+**Merged to `main` (`gh pr merge 8 --merge`) and confirmed deployed** —
+Vercel's auto-deploy from the merge commit reached `READY` on
+`founder-copilot-flame.vercel.app`, zero runtime errors in Vercel's own
+error log in the following 30 minutes, and the live `/pricing` page was
+re-fetched directly from that production domain (not just the local
+build) showing the correct 4-tier content. **Still not verified**: an
+actual generation against this merged code (would confirm Portkey/
+Upstash + credit-gating actually cooperate correctly at runtime, not
+just that both compile and the page renders), and the real Stripe
+checkout/webhook round trip (blocked on the founder adding real Stripe
+env vars, per the entry above).
 
 ## Architecture
 
