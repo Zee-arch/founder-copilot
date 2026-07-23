@@ -59,7 +59,7 @@ alter table user_billing enable row level security;
 drop policy if exists "users can read their own billing row" on user_billing;
 create policy "users can read their own billing row"
   on user_billing for select
-  using (auth.uid() = user_id);
+  using ((select auth.uid()) = user_id);
 
 -- No insert/update policy for regular users on purpose: credits and plan
 -- changes only ever happen from trusted server code (the Stripe webhook,
@@ -86,6 +86,8 @@ create table if not exists organizations (
 );
 
 alter table organizations enable row level security;
+
+create index if not exists organizations_owner_id_idx on organizations(owner_id);
 
 create table if not exists organization_members (
   org_id uuid not null references organizations(id) on delete cascade,
@@ -135,9 +137,12 @@ drop policy if exists "users can read their own credit history" on credit_ledger
 create policy "users can read their own credit history"
   on credit_ledger for select
   using (
-    auth.uid() = user_id
-    or org_id in (select org_id from organization_members where user_id = auth.uid())
+    (select auth.uid()) = user_id
+    or org_id in (select org_id from organization_members where user_id = (select auth.uid()))
   );
+
+create index if not exists credit_ledger_org_id_idx on credit_ledger(org_id);
+create index if not exists credit_ledger_user_id_idx on credit_ledger(user_id);
 
 -- API keys (Team+ only). Split into a public-safe table and a secrets
 -- table on purpose: `api_keys` is readable by org members via RLS so the
@@ -161,8 +166,11 @@ drop policy if exists "org members can read their org's api keys" on api_keys;
 create policy "org members can read their org's api keys"
   on api_keys for select
   using (
-    org_id in (select org_id from organization_members where user_id = auth.uid())
+    org_id in (select org_id from organization_members where user_id = (select auth.uid()))
   );
+
+create index if not exists api_keys_created_by_idx on api_keys(created_by);
+create index if not exists api_keys_org_id_idx on api_keys(org_id);
 
 create table if not exists api_key_secrets (
   key_id uuid primary key references api_keys(id) on delete cascade,
