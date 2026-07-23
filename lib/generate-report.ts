@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { PORTKEY_GATEWAY_URL } from "portkey-ai";
 import { buildValidationUserPrompt, VALIDATION_SYSTEM_PROMPT } from "@/lib/prompt";
 import { parseValidationReport } from "@/lib/parse-report";
 import type { ValidationReport } from "@/lib/types";
@@ -7,9 +8,17 @@ export const MAX_IDEA_LENGTH = 500;
 
 // Shared by the web UI's /api/generate and the Team-tier /api/v1/* routes —
 // pulled out of app/api/generate/route.ts so both call the exact same
-// model logic (retries, token-budget workaround, honesty guardrails)
-// instead of two copies drifting apart. See git history on
-// app/api/generate/route.ts for why each of these exists.
+// model logic (retries, token-budget workaround, honesty guardrails, and
+// the Portkey-gateway-with-direct-Groq-fallback selection below) instead
+// of two copies drifting apart. See git history on app/api/generate/
+// route.ts for why each of these exists.
+
+// The model id changes shape depending on how the request reaches Groq:
+// direct, it's the bare model name; through Portkey's gateway, it's
+// prefixed with the provider slug configured in Portkey's Model Catalog
+// (`@<slug>/<model>`). Kept as one constant so it's obvious both paths
+// point at the same underlying model.
+const GROQ_MODEL = "openai/gpt-oss-120b";
 
 const MAX_MODEL_RETRIES = 1;
 const FALLBACK_RETRY_BACKOFF_MS = 2000;
@@ -60,14 +69,45 @@ export function friendlyGenerationErrorMessage(error: unknown): string {
 
 export class GenerationConfigError extends Error {}
 
-export async function generateValidationReport(idea: string): Promise<ValidationReport> {
-  const apiKey = process.env.GROQ_API_KEY;
+// Routes through Portkey's gateway when configured (gets fallback/caching
+// config, cost tracking, and observability logging for free — see
+// HANDOFF.md), otherwise falls back to calling Groq directly. Deliberately
+// not a hard requirement: a missing/misconfigured PORTKEY_API_KEY should
+// degrade to "no gateway features" rather than take generation down
+// entirely, same never-fail-closed-on-an-optional-integration pattern as
+// Supabase elsewhere in this app.
+function resolveClient(): { client: OpenAI; model: string; via: "portkey" | "direct" } {
+  const portkeyApiKey = process.env.PORTKEY_API_KEY;
+  const groqApiKey = process.env.GROQ_API_KEY;
 
-  if (!apiKey) {
-    throw new GenerationConfigError("Groq API key is missing. Add GROQ_API_KEY to your .env.local file and restart the server.");
+  if (portkeyApiKey) {
+    // The slug is whatever you named the Groq credential when adding it to
+    // Portkey's Model Catalog (Settings -> Model Catalog -> AI Providers ->
+    // Add Provider -> Groq) — "groq" is Portkey's own example/default
+    // naming, not a hardcoded requirement, hence the env var override.
+    const slug = process.env.PORTKEY_GROQ_SLUG || "groq";
+    return {
+      client: new OpenAI({ apiKey: portkeyApiKey, baseURL: PORTKEY_GATEWAY_URL }),
+      model: `@${slug}/${GROQ_MODEL}`,
+      via: "portkey",
+    };
   }
 
-  const client = new OpenAI({ apiKey, baseURL: "https://api.groq.com/openai/v1" });
+  if (groqApiKey) {
+    return {
+      client: new OpenAI({ apiKey: groqApiKey, baseURL: "https://api.groq.com/openai/v1" }),
+      model: GROQ_MODEL,
+      via: "direct",
+    };
+  }
+
+  throw new GenerationConfigError(
+    "No AI provider is configured. Add PORTKEY_API_KEY (recommended) or GROQ_API_KEY to your .env.local file and restart the server.",
+  );
+}
+
+export async function generateValidationReport(idea: string): Promise<ValidationReport> {
+  const { client, model, via } = resolveClient();
 
   const generateStart = Date.now();
   let completion;
@@ -76,7 +116,7 @@ export async function generateValidationReport(idea: string): Promise<Validation
   while (true) {
     try {
       completion = await client.chat.completions.create({
-        model: "openai/gpt-oss-120b",
+        model,
         messages: [
           { role: "system", content: VALIDATION_SYSTEM_PROMPT },
           { role: "user", content: buildValidationUserPrompt(idea) },
@@ -97,7 +137,7 @@ export async function generateValidationReport(idea: string): Promise<Validation
     }
   }
 
-  console.log(`[generate] ${Date.now() - generateStart}ms, model=openai/gpt-oss-120b, retries=${attempt}`);
+  console.log(`[generate] ${Date.now() - generateStart}ms, model=${model}, via=${via}, retries=${attempt}`);
 
   if (completion.choices[0]?.finish_reason === "length") {
     console.warn("[generate] completion hit the token cap (finish_reason=length) — report may have missing fields");

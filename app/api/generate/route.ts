@@ -1,4 +1,4 @@
-import { checkRateLimit } from "@/lib/rate-limit";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { createClient } from "@/lib/supabase/server";
 import { MAX_IDEA_LENGTH, friendlyGenerationErrorMessage, generateValidationReport } from "@/lib/generate-report";
 import { consumeCredit } from "@/lib/entitlements";
@@ -15,13 +15,6 @@ import { consumeCredit } from "@/lib/entitlements";
 // same open decision as before this swap.
 export const maxDuration = 60;
 
-function getClientIp(request: Request): string {
-  // Vercel/most proxies set this; falls back to a shared bucket if absent
-  // (e.g. running locally without a proxy in front).
-  const forwardedFor = request.headers.get("x-forwarded-for");
-  return forwardedFor?.split(",")[0]?.trim() || "unknown";
-}
-
 export async function POST(request: Request) {
   try {
     const supabase = await createClient();
@@ -31,10 +24,16 @@ export async function POST(request: Request) {
 
     // Signed-out generation is the "free tier (lead-gen)" experience — no
     // signup required, gated only by IP so it stays a genuine no-friction
-    // try-before-you-buy path. A signed-in user (any plan, including the
-    // free plan itself) is instead gated by their credit balance — see
+    // try-before-you-buy path (middleware.ts also enforces a durable,
+    // Upstash-backed version of this same IP limit ahead of this route when
+    // configured; this in-memory check is the local-dev/no-Upstash
+    // fallback). A signed-in user (any plan, including the free plan
+    // itself) is instead gated by their credit balance — see
     // lib/entitlements.ts — since that's what actually distinguishes free
-    // from Prosumer/Team once someone has an account.
+    // from Prosumer/Team once someone has an account. Deliberately NOT
+    // also subject to the flat per-user Upstash limit in middleware.ts —
+    // see that file's comment for why a blanket request-per-hour cap would
+    // undercut what a Prosumer/Team subscription is actually paying for.
     if (!user) {
       const ip = getClientIp(request);
       const rateLimit = checkRateLimit(ip);
