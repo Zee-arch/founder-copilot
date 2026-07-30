@@ -29,7 +29,18 @@ const redis =
     : null;
 
 const GENERATE_WINDOW = "1 h";
-const GENERATE_LIMIT_PER_IP = 8; // matches the in-memory fallback's existing limit, see below
+// Raised 8 -> 30 (2026-07-25) ahead of sharing this publicly. The anonymous
+// limiter keys on IP, which is the only identity an anonymous request has —
+// but mobile carriers route many subscribers through a handful of shared
+// CGNAT addresses, so a burst of visitors arriving from one social post can
+// look like a single abusive IP and lock each other out. 30/hour still stops
+// a single scraper hammering the endpoint while leaving real shared-IP
+// traffic room. Well within provider budget either way: Groq's free tier is
+// 30 req/min and 14,400 req/day, far above what this ceiling can produce.
+const GENERATE_LIMIT_PER_IP = 30; // keep in sync with the in-memory fallback below
+// Unused in practice — middleware.ts deliberately skips the durable limiter
+// for signed-in requests (their real throttle is the credit balance check in
+// app/api/generate/route.ts), so this only matters if that ever changes.
 const GENERATE_LIMIT_PER_USER = 8;
 
 const ipLimiter = redis
@@ -90,7 +101,11 @@ type Bucket = {
 const buckets = new Map<string, Bucket>();
 
 const WINDOW_MS = 60 * 60 * 1000; // 1 hour
-const MAX_REQUESTS_PER_WINDOW = 8; // generous for testing, tight enough to block abuse
+// Kept in sync with GENERATE_LIMIT_PER_IP above (raised 8 -> 30, 2026-07-25).
+// Both need changing together: which one actually applies depends on whether
+// Upstash is configured in a given environment, so leaving them different
+// would make the real limit silently depend on deploy config.
+const MAX_REQUESTS_PER_WINDOW = 30;
 
 export function checkRateLimit(ip: string): { allowed: boolean; retryAfterSeconds?: number } {
   const now = Date.now();
