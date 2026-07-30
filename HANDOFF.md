@@ -1237,6 +1237,102 @@ per-migration confirmation pattern as everything else in this log).
 6. Batch API's `maxDuration=300` needs a Vercel plan that honors it —
    confirm current plan tier before advertising batch as a real feature.
 
+**2026-07-25: public-launch readiness audit + two prep changes.** The
+founder wants to share the live link on LinkedIn and asked directly
+whether sign-up/login and the Stripe pricing page actually work for
+strangers. Audited the **live production site** as an anonymous visitor
+(not localhost, not the code — the actual thing a LinkedIn click lands
+on). His instinct was right on both counts.
+
+**What genuinely works for the public** (verified live, not assumed):
+anonymous generation succeeds in roughly ten seconds on Groq — ran "A
+mobile app that helps parents find and book last-minute childcare,"
+scored 68/100 REFINE, all seven steps populated with real idea-specific
+content. Build Brief in particular came back genuinely reasoned per-idea
+(Checkr for background checks, Stripe Connect for marketplace splits) —
+the anti-genericness instruction added on 2026-07-22 is doing real work,
+not just present in the prompt. Mobile (375px) renders correctly on both
+the landing page and the report journey. All public routes return 200,
+`/dashboard` correctly redirects signed-out visitors to
+`/login?next=/dashboard`, `/api/stripe/checkout` and `/api/v1/validate`
+both 401 cleanly with useful messages, and there are zero console errors.
+
+**Blocker 1 — email/password sign-up is broken for everyone except the
+founder.** Confirmed by actually signing up on production as a stranger
+(`publictester@example.com`, an IANA-reserved documentation domain that
+can't belong to a real person): the form returns "Something went wrong
+on our end. Please try again in a moment, or use Google sign-in
+instead." This is the *known* Resend sandbox limitation already
+documented under "Production email gotchas" — `onboarding@resend.dev`
+only delivers to the Resend account's own verified address. **Note that
+commit `aa0c8d7` only improved the error message; it did not fix
+sending.** It stays broken until a real domain is verified in Resend.
+
+**Blocker 2 — Stripe is on test keys.** `STRIPE_SECRET_KEY` in
+`.env.local` begins `sk_test_` (checked by prefix only, never printing
+the secret). Real customer cards are declined in test mode; only
+Stripe's test cards work. Vercel's Production env could in principle
+differ, but Claude has no tool access to read Vercel env vars — **the
+founder must confirm that himself.** Compounding this: the paid funnel
+is gated behind sign-up (`PricingCards.tsx` pushes a signed-out visitor
+to `/login`), so with Blocker 1 unfixed, *nobody can reach checkout at
+all* regardless of key mode.
+
+**Blocker 3 — Google OAuth publishing status is unknown and likely
+"Testing."** The flow reaches Google's real sign-in page, which proves
+the OAuth client and redirect URI are configured correctly. But
+completing a stranger's sign-in needs a real Google account, which
+Claude won't use, so this could not be verified end to end. **Founder
+must check Google Cloud Console → APIs & Services → OAuth consent
+screen → Publishing status.** If it's "Testing" (the default), only
+explicitly-listed test users can sign in and everyone else is blocked.
+Separately worth fixing before a public share: the consent screen
+currently reads "to continue to **sgpfeeehjmlfwlnqdrof.supabase.co**" —
+a raw Supabase project ref, not "FounderCopilot," which reads as
+untrustworthy to a stranger.
+
+**Two changes made in response** (this branch):
+1. **`components/SiteHeader.tsx` — the "Pricing" nav link is hidden.**
+   Not deleted: `/pricing` still renders if visited directly, and the
+   restore instructions plus their preconditions are in a comment right
+   above `NAV_LINKS`. Rationale: linking to plans nobody can buy (per
+   blockers 1 and 2) is a dead end on what's meant to be a portfolio
+   piece. `components/dashboard/BillingSummary.tsx` still links to
+   `/pricing` and was left alone — it only renders for signed-in users,
+   which today means the founder.
+2. **`lib/rate-limit.ts` — anonymous limit raised 8 → 30 per hour.**
+   The anonymous limiter keys on IP because that's the only identity an
+   anonymous request has, but mobile carriers route many subscribers
+   through shared CGNAT addresses — and LinkedIn traffic skews heavily
+   mobile, so a burst of real visitors can look like one abusive IP and
+   lock each other out. **Both constants were changed together**
+   (`GENERATE_LIMIT_PER_IP` for the Upstash path and
+   `MAX_REQUESTS_PER_WINDOW` for the in-memory fallback) — leaving them
+   different would make the real limit silently depend on whether
+   Upstash happens to be configured in a given environment. Still well
+   inside Groq's free tier (30 req/min, 14,400 req/day).
+
+**Also worth knowing**: `/pricing`'s "Contact sales" is a `mailto:` to
+the founder's personal Gmail, which will attract spam once shared
+publicly.
+
+**Recommendation given to the founder**: share it as a *free demo* and
+don't drive people toward sign-up or pricing — the anonymous flow is
+the genuinely strong part and needs no account. Of the three blockers,
+fixing Google's publishing status is the cheapest real unlock (no
+domain purchase required, unlike the Resend fix).
+
+**Local-repo note (2026-07-25):** the local working copy had drifted
+badly — it sat on the stale `auth-foundation` branch, twelve commits
+behind `origin/main`, with a `HANDOFF.md` predating Stripe, pricing,
+org/teams and the public API, and a `node_modules` so old that
+`stripe` wasn't installed (which made `tsc` report two phantom
+module-not-found errors until `npm install` was re-run). The Desktop
+folder had also been renamed from `FounderCopilot 2` to
+`FounderCopilot`. If typecheck reports missing modules that clearly
+exist in `package.json`, re-run `npm install` before chasing it as a
+code problem.
+
 ## Architecture
 
 - Next.js 15 (App Router), TypeScript, Tailwind v4 (CSS-first config in
@@ -1583,7 +1679,28 @@ it's wanted.
 
 ## Immediate next steps (discussed, not yet done)
 
-**Added 2026-07-23, highest priority right now:** the hybrid pricing/
+**Added 2026-07-25 — do these before sharing the link publicly.** See the
+2026-07-25 status log entry for how each was verified. All three are
+founder-only actions; none can be done from the CLI:
+
+- **A. Google OAuth publishing status** — Google Cloud Console → APIs &
+  Services → OAuth consent screen. If it's "Testing," only listed test
+  users can sign in and every stranger is blocked. Cheapest of the three
+  to fix, and it's the only sign-up path that could work today. While
+  there, set the app name/branding so the consent screen stops showing
+  the raw `sgpfeeehjmlfwlnqdrof.supabase.co` project ref.
+- **B. Resend domain verification** — until a real owned domain is
+  verified and the sender changed off `onboarding@resend.dev`,
+  email/password sign-up fails for literally everyone except the
+  founder's own address. Confirmed live, not theoretical.
+- **C. Stripe live keys** — `.env.local` is on `sk_test_`, so real cards
+  are declined. Confirm what Vercel's Production env actually holds
+  (Claude can't read it), and switch to live keys plus live-mode Price
+  IDs before expecting anyone to pay. Note the pricing nav link is
+  hidden until A/B/C are resolved — restore instructions are in the
+  comment above `NAV_LINKS` in `components/SiteHeader.tsx`.
+
+**Added 2026-07-23, highest priority for the billing work itself:** the hybrid pricing/
 billing foundation (see the 2026-07-23 status log entry above) is
 written and typechecks/builds clean but has never touched a real Stripe
 account. Before trusting it: (1) founder creates a Stripe account +

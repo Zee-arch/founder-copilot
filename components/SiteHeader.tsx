@@ -9,10 +9,20 @@ import { BRAND_ICON } from "@/lib/report-icons";
 import { createClient } from "@/lib/supabase/client";
 import { signOut } from "@/app/actions/auth";
 
+// "Pricing" is deliberately absent while the product is shared publicly as a
+// free demo. The paid funnel is gated behind sign-up (PricingCards.tsx pushes
+// a signed-out visitor to /login), and sign-up currently can't complete for
+// anyone but the founder — Resend's sandbox sender only delivers to the
+// Resend account's own verified address, so a stranger's confirmation email
+// is rejected outright. Linking to a plan nobody can actually buy is a dead
+// end, so the link is hidden rather than the page deleted.
+// To restore: add `{ href: "/pricing", label: "Pricing" }` back below, once
+// (a) a real domain is verified in Resend so email sign-up works for anyone,
+// and (b) Stripe is confirmed to be running on live keys, not test keys.
+// /pricing itself still renders if visited directly — nothing was removed.
 const NAV_LINKS = [
   { href: "/", label: "Home" },
   { href: "/how-it-works", label: "How It Works" },
-  { href: "/pricing", label: "Pricing" },
   { href: "/about", label: "About" },
 ];
 
