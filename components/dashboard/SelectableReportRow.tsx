@@ -20,7 +20,7 @@ export function SelectableReportRow({
   disabled: boolean;
   onToggle: () => void;
 }) {
-  const { idea, report, created_at } = row;
+  const { idea, report, created_at, org_id } = row;
   const tone = VERDICT_TONE[report.verdict];
   const VerdictIcon = VERDICT_ICONS[report.verdict];
 
@@ -43,7 +43,14 @@ export function SelectableReportRow({
           {selected && <Check className="h-3.5 w-3.5" strokeWidth={3} />}
         </span>
         <div className="min-w-0">
-          <p className="truncate font-display text-base text-slate-text">{idea}</p>
+          <div className="flex items-center gap-2">
+            <p className="truncate font-display text-base text-slate-text">{idea}</p>
+            {org_id && (
+              <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                Team
+              </span>
+            )}
+          </div>
           <p className="mt-1 text-xs text-slate-400">
             {new Date(created_at).toLocaleDateString(undefined, {
               year: "numeric",

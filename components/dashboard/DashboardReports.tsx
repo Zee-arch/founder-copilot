@@ -12,6 +12,7 @@ export type ReportRow = {
   idea: string;
   report: ValidationReport;
   created_at: string;
+  org_id: string | null;
 };
 
 type SortOption = "newest" | "score-desc" | "score-asc";
@@ -156,7 +157,13 @@ export function DashboardReports({ rows }: { rows: ReportRow[] }) {
                 onToggle={() => toggleSelected(row.id)}
               />
             ) : (
-              <ReportCard key={row.id} idea={row.idea} report={row.report} createdAt={row.created_at} />
+              <ReportCard
+                key={row.id}
+                idea={row.idea}
+                report={row.report}
+                createdAt={row.created_at}
+                isTeamReport={Boolean(row.org_id)}
+              />
             ),
           )}
         </div>

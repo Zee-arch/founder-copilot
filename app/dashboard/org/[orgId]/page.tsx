@@ -40,7 +40,7 @@ export default async function OrgDashboardPage({ params }: { params: Promise<{ o
 
   const { data: reportRows, error } = await supabase
     .from("reports")
-    .select("id, idea, report, created_at, user_id")
+    .select("id, idea, report, created_at, org_id, user_id")
     .eq("org_id", orgId)
     .order("created_at", { ascending: false });
 
@@ -58,6 +58,7 @@ export default async function OrgDashboardPage({ params }: { params: Promise<{ o
       idea: r.idea,
       report: r.report as ValidationReport,
       created_at: r.created_at,
+      org_id: r.org_id,
       submitterName: profile?.display_name || profile?.email || "Unknown",
     };
   });

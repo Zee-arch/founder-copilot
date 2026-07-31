@@ -22,16 +22,18 @@ export default async function DashboardPage() {
 
   if (!user) redirect("/login?next=/dashboard");
 
-  // `.is("org_id", null)` scopes this to reports generated outside a Team
-  // org — once RLS also lets org-mates read each other's org-tagged
-  // reports (for the cohort dashboard), an unfiltered query here would mix
-  // teammates' reports into what's presented as "your reports." Org-tagged
-  // reports live on the cohort dashboard (/dashboard/org/[orgId]) instead.
+  // `.eq("user_id", user.id)` rather than relying on RLS's own "mine or my
+  // org's" OR-clause — RLS would also surface teammates' org-tagged
+  // reports here (since it allows any org member to read any org report,
+  // for the cohort dashboard's benefit). This page is "reports I
+  // generated," full stop, whether or not they're tagged to a Team org;
+  // teammates' reports stay exclusive to the cohort dashboard
+  // (/dashboard/org/[orgId]).
   const [{ data: reports, error }, entitlements] = await Promise.all([
     supabase
       .from("reports")
-      .select("id, idea, report, created_at")
-      .is("org_id", null)
+      .select("id, idea, report, created_at, org_id")
+      .eq("user_id", user.id)
       .order("created_at", { ascending: false }),
     getEntitlements(user.id),
   ]);

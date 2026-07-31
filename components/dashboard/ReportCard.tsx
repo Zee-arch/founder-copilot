@@ -11,10 +11,12 @@ export function ReportCard({
   idea,
   report,
   createdAt,
+  isTeamReport,
 }: {
   idea: string;
   report: ValidationReport;
   createdAt: string;
+  isTeamReport?: boolean;
 }) {
   const router = useRouter();
   const { setReportData } = useReport();
@@ -33,7 +35,14 @@ export function ReportCard({
       className="group flex w-full flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:border-brand/40 hover:shadow-md sm:flex-row sm:items-center sm:justify-between sm:gap-4"
     >
       <div className="min-w-0 flex-1">
-        <p className="truncate font-display text-base text-slate-text">{idea}</p>
+        <div className="flex items-center gap-2">
+          <p className="truncate font-display text-base text-slate-text">{idea}</p>
+          {isTeamReport && (
+            <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+              Team
+            </span>
+          )}
+        </div>
         <p className="mt-1 text-xs text-slate-400">
           {new Date(createdAt).toLocaleDateString(undefined, {
             year: "numeric",
