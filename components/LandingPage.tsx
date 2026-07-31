@@ -12,16 +12,17 @@ import { VerdictGauge } from "@/components/report/Snapshot";
 import { TONE_COLOR, tierForScore } from "@/lib/verdict-tone";
 import type { ValidationReport } from "@/lib/types";
 
-// Swapped to Groq for generation (2026-07-22, see HANDOFF.md) — no search
-// grounding on this provider, and Groq's inference is fast (expect low
-// single-digit seconds), so this drops the ~130s "searching" phase entirely
-// rather than leaving a step that lies about what's happening. Not yet
-// precisely re-measured against a real Groq call — tighten once real
-// timing is known, same as the note this replaces.
+// Generation is now a 3-wave council pipeline (2026-07-31, see
+// lib/generate-report.ts): 3 specialists draft in parallel, a critic
+// red-teams the combined draft, then a synthesis pass assigns scores and
+// finalizes. Durations are a placeholder split of the previous single-call
+// Groq timing across 3 steps — not yet re-measured against real pipeline
+// timing, tighten once known.
 const GENERATION_STEPS = [
-  { label: "Reading your idea", durationMs: 2000 },
-  { label: "Scoring 8 factors", durationMs: 4000 },
-  { label: "Building your report", durationMs: Infinity },
+  { label: "Reading your idea", durationMs: 1500 },
+  { label: "Researching market, competitors & execution plan", durationMs: 4000 },
+  { label: "Red-teaming the draft for weak spots", durationMs: 3000 },
+  { label: "Finalizing your report", durationMs: Infinity },
 ];
 
 const TRUST_BADGES = [

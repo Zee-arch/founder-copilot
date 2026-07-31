@@ -1378,6 +1378,143 @@ this becomes a real product, verify a domain in Resend and turn
 confirmations back on; `AuthForm.tsx` already handles that switch
 correctly, per the fix above.
 
+**2026-07-31 (later still): Gemini configured, then reverted to Groq —
+same-day round trip, not a real swap.** The founder asked to configure
+`GOOGLE_API_KEY` for a "Gemini 3.1 Lite" model — the real API id is
+`gemini-3.1-flash-lite` (confirmed live; "Gemini 3.1 Lite" isn't a
+standalone model name). Wired up via Gemini's OpenAI-compatible
+endpoint, kept the existing Portkey-gateway-with-direct-fallback shape.
+Live-verified working. The founder then reported generation "giving the
+same result over and over" — root cause turned out to be two duplicate
+`next dev` processes racing on the same `.next` build cache (one an
+orphaned background process from this session's own earlier testing),
+corrupting the build and throwing `MODULE_NOT_FOUND`/`ENOENT`. Not a
+Gemini bug. Killed both, cleared `.next`, confirmed a clean single dev
+server produces genuinely varying, idea-appropriate output.
+
+Separately restored Gemini's native `googleSearch` grounding tool (real
+sources, sourced competitor figures) — proven working code already sat
+in git history from before the earlier Groq swap, so this was a revert,
+not a rebuild. Required switching that one call from the OpenAI-
+compatible `chat.completions` endpoint back to the native `@google/genai`
+SDK, since Google's grounding tool and `response_format: json_object`
+are mutually exclusive on that API (same constraint as the original
+implementation).
+
+**Then Gemini's free grounding quota was genuinely exhausted** (real
+`RESOURCE_EXHAUSTED` 429, retry-with-backoff fired correctly and failed
+cleanly with a friendly error — not a bug in the retry logic itself).
+Founder asked to go back to Groq. Reverted `lib/generate-report.ts`,
+`lib/prompt.ts`, `app/api/generate/route.ts`, `lib/types.ts`,
+`middleware.ts`, `lib/rate-limit.ts`, `components/LandingPage.tsx`,
+`components/Footer.tsx`, `.env.local.example`, `README.md`,
+`package.json` via `git checkout HEAD --` rather than hand-reconstructing
+— since none of this had been committed yet, `HEAD` already held the
+exact working Groq+Portkey state. Re-synced `node_modules`
+(`openai`/`portkey-ai` back, `@google/genai` out) and restored
+`GROQ_API_KEY`/`PORTKEY_API_KEY`/`PORTKEY_GROQ_SLUG` in `.env.local`
+(untracked, so the checkout didn't touch it). Verified live again:
+`via=portkey`, 7s, 200 OK. Net effect on `main`: none of the Gemini work
+landed — it's sitting in earlier git history if it's worth revisiting
+once quota resets or before a real provider comparison.
+
+**2026-07-31 (later still): report generation rebuilt as a 3-wave,
+5-call "council of agents" on the Vercel AI SDK**, replacing the single
+Groq call, at the founder's request for a genuinely more detailed,
+higher-value report rather than a cost/reliability swap. Architecture:
+
+- **Wave 1 (parallel)** — three specialist agents draft independently,
+  each owning a disjoint slice of the schema: Market & Opportunity
+  (category, market sizing, go/stop signals, 4 sections), Competitive &
+  Revenue (competitors, financials, 3 sections), Execution & Validation
+  (roadmap, customer validation, build brief, 3 sections).
+- **Wave 2 (sequential)** — a Critic agent reads all 3 drafts together
+  and red-teams them for generic language, cross-draft inconsistencies,
+  and unlabeled figures. Flags issues only, never rewrites.
+- **Wave 3 (sequential)** — a Synthesis agent, scoped as an editor not a
+  rewriter: the structured fields from wave 1 (market/financials/
+  roadmap/competitive/customerValidation/buildBrief) are merged verbatim
+  in code, zero LLM cost. The LLM call only assigns the 8 scores and
+  lightly revises the 10 section drafts for one consistent voice,
+  incorporating the critic's fixes.
+
+`lib/report-schemas.ts` (new) holds Zod schemas for all 5 call shapes,
+replacing most of `lib/parse-report.ts`'s old hand-rolled JSON coercion
+— it now only does real business logic (merging the wave-1 drafts,
+computing `overallScore`/`verdict` from `scores`). `lib/prompt.ts`
+expanded from 1 system prompt to 5. `lib/generate-report.ts` is the new
+orchestrator; `generateValidationReport(idea)`'s signature is unchanged,
+so `app/api/generate/route.ts`, `app/api/v1/validate/route.ts`, and
+`app/api/v1/batch/route.ts` needed zero changes. `app/api/v1/batch/
+route.ts`'s `CONCURRENCY` dropped 4 → 2, since each report now fans out
+to multiple Groq calls instead of one.
+
+**Planned via a written plan file first** (architecture, field ownership,
+new dependencies, a TPM risk section) — the founder was asked and chose
+"build it, verify live, adjust if needed" over pre-shrinking the design,
+specifically because researching this codebase's own history
+(`HANDOFF.md`, this file) surfaced a real prior incident: `openai/
+gpt-oss-120b` (the model in use) is a *reasoning* model with an
+undocumented 8,000 TPM free-tier ceiling, discovered live the first time
+this app hit it (see the 2026-07-22ish token-budget entry above). That
+turned out to be exactly right to worry about:
+
+- **Confirmed live, the planned model didn't fit at all**: a single
+  report generation exceeded the 8,000 TPM ceiling on its own (`Limit
+  8000, Used 6984, Requested 2616`), before any concurrent traffic.
+  Switched to `llama-3.3-70b-versatile` (12K TPM on Groq's free tier, a
+  non-reasoning model so no `reasoning_effort` tax either).
+- That model doesn't support Groq's native `json_schema` structured
+  output at all — confirmed live, it's GPT-OSS-only. The `@ai-sdk/openai`
+  compatible-mode client always requests native schema enforcement with
+  no fallback, so switched to the official `@ai-sdk/groq` provider
+  instead, whose `structuredOutputs: false` provider option falls back to
+  `json_object` mode (Zod still validates client-side after parsing).
+- Groq rejects `response_format: json_object` outright unless the word
+  "json" literally appears in the prompt (same rule OpenAI's JSON mode
+  has) — confirmed live, added to every system prompt.
+- In `json_object` mode there's no schema sent to the provider at all, so
+  every one of the 5 prompts needed an explicit literal JSON shape
+  example — without it the model guessed wrong shapes (e.g. revenue
+  streams as plain strings instead of `{name, description}` objects) and
+  every call failed Zod validation.
+- Also dropped `.catch()` fallbacks from `lib/report-schemas.ts`
+  entirely: Groq's structured-output validator requires every property
+  listed in the schema's `required` array, but the AI SDK's zod-to-
+  json-schema conversion treats a `.catch()`-wrapped field as optional,
+  which Groq rejected outright (confirmed live). Every field is now
+  plain-required; a genuinely malformed response fails the whole
+  generation cleanly instead of silently degrading — same "hard-fail and
+  surface a friendly error" tier this app already used for report
+  sections/scores, just extended to everything now that a provider-level
+  guarantee replaced the client-side soft-default.
+
+**Real remaining constraint, measured and documented, not glossed over**:
+across 5 different live test ideas (subscription box, B2B SaaS,
+marketplace, consumer, hardware), one full report consistently used
+~11,700–11,900 of `llama-3.3-70b-versatile`'s 12,000 TPM budget — on its
+own, before any concurrent traffic. Trimmed what fixed prompt overhead
+was safe to cut (category-emphasis rules were being duplicated into
+prompts that couldn't act on them anyway, since wave-1 agents run in
+parallel and don't know the classification yet), but output length (the
+report content itself) dominates the total and isn't something to cut
+without cutting quality. Practical effect: this free-tier key can
+sustain roughly one report per rolling minute — a second concurrent
+request, or a batch run, will likely 429 despite the `CONCURRENCY`
+reduction above. Fine for solo testing; a paid Groq/Portkey tier is a
+real prerequisite before real traffic, not a nice-to-have — documented
+in a code comment next to the model constant in `lib/generate-report.ts`
+so it isn't missed later.
+
+**Verified live**, not just typechecked: 5 real generations across
+different idea categories, each correctly classified (a hardware EV-
+charger idea scored low on Regulatory Ease/Capital Efficiency and high
+on Market Size, a construction-safety SaaS idea landed in "Regulated
+(Health/Finance)" with a compliance-appropriate Risks section) —
+category-specific scoring differentiation that a single-shot call
+wouldn't have had this level of cross-checked confidence behind.
+`npx tsc --noEmit` and `eslint` clean throughout.
+
 ## Architecture
 
 - Next.js 15 (App Router), TypeScript, Tailwind v4 (CSS-first config in

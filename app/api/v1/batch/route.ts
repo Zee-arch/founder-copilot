@@ -12,7 +12,12 @@ import { MAX_IDEA_LENGTH, friendlyGenerationErrorMessage, generateValidationRepo
 export const maxDuration = 300;
 
 const MAX_BATCH_SIZE = 20;
-const CONCURRENCY = 4;
+// Lowered 4 -> 2 (2026-07-31, council-of-agents rewrite): each report is
+// now a 3-wave pipeline that fans out to 3 concurrent Groq calls at wave
+// 1's peak, not 1 call total. 4 concurrent reports could spike to ~12
+// concurrent Groq calls against the shared free-tier ceiling; 2 caps peak
+// concurrent calls at ~6. See lib/generate-report.ts for the pipeline.
+const CONCURRENCY = 2;
 
 type BatchResult =
   | { idea: string; status: "ok"; report: Awaited<ReturnType<typeof generateValidationReport>> }
