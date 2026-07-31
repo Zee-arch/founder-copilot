@@ -75,7 +75,7 @@ export function AuthForm({ mode, next = "/" }: { mode: Mode; next?: string }) {
       return;
     }
 
-    const { error: signUpError } = await supabase.auth.signUp({
+    const { data, error: signUpError } = await supabase.auth.signUp({
       email,
       password,
       options: { emailRedirectTo: `${window.location.origin}/auth/confirm?next=${encodeURIComponent(next)}` },
@@ -84,6 +84,21 @@ export function AuthForm({ mode, next = "/" }: { mode: Mode; next?: string }) {
     if (signUpError) {
       setError(errorMessage(signUpError, "Couldn't create your account. Please try again."));
       setIsSubmitting(false);
+      return;
+    }
+
+    // Which of these two branches runs is decided by Supabase's
+    // Auth > Providers > Email > "Confirm email" setting, not by this code —
+    // so handle both rather than assuming one, since flipping that toggle in
+    // the dashboard would otherwise silently break this flow.
+    //
+    // Confirmations OFF: the user is already verified and signed in, and no
+    // email was ever sent — showing "check your email" would strand them
+    // waiting for a message that will never arrive. Send them into the app.
+    // Confirmations ON: session is null and a real confirmation email went
+    // out, so the confirmation screen below is the correct next step.
+    if (data.session) {
+      window.location.href = next;
       return;
     }
 
