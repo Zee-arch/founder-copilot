@@ -1333,6 +1333,51 @@ folder had also been renamed from `FounderCopilot 2` to
 exist in `package.json`, re-run `npm install` before chasing it as a
 code problem.
 
+**2026-07-31: Blocker 1 (email sign-up) resolved — public journey now
+verified working end-to-end on live production, not just locally.** The
+founder chose the free fix over verifying a domain in Resend: turned off
+Supabase's Auth > Providers > Email > "Confirm email" setting, so no
+confirmation email is sent at all and Resend's sandbox-sender limitation
+stops mattering.
+
+That toggle alone would have half-broken the form, though:
+`components/AuthForm.tsx` unconditionally showed a "check your email"
+screen after sign-up, which is only correct when confirmations are on
+(session is null until the link is clicked). With confirmations off,
+`signUp()` returns a **live session immediately** — showing the old
+screen would have stranded a new user watching for an email that would
+never arrive, despite already being signed in. Fixed by branching on
+`data.session`: present → redirect straight into the app; null → show
+the confirmation screen, unchanged. Handles either configuration of that
+dashboard toggle rather than assuming one, so flipping it again later
+(e.g. once a domain is verified in Resend and confirmations go back on)
+won't silently break sign-up a second time. Merged as PR #15.
+
+**Verified for real, twice — locally against the real Supabase project,
+then again against the actual production domain post-merge**: signed up
+with a fabricated email (`linkedinvisitor01@example.com` on production,
+never used anywhere before), landed signed in immediately with no
+confirmation step, generated a real report ("A marketplace for renting
+power tools between neighbors," 68/100 REFINE), and confirmed it appears
+correctly on `/dashboard` — Free plan, credits counter, score, REFINE
+badge. This is the exact journey a LinkedIn visitor will take. Zero
+console errors, zero server errors (`preview_logs` checked after each
+step).
+
+**Blocker 1 is closed. Blockers 2 (Stripe on test keys) and 3 (Google
+OAuth publishing status) are unrelated and still open — this only fixed
+the email/password path.** The "Pricing" nav link (hidden 2026-07-25,
+above) should stay hidden until blocker 2 is also resolved, since the
+paid funnel still can't take a real payment.
+
+**Trade-off, said plainly rather than glossed over**: with confirmations
+off, email addresses are never verified — a typo or someone else's
+address can sign up. Acceptable for a free demo with no sensitive data
+and no password-reset flow depending on a verified address today. If
+this becomes a real product, verify a domain in Resend and turn
+confirmations back on; `AuthForm.tsx` already handles that switch
+correctly, per the fix above.
+
 ## Architecture
 
 - Next.js 15 (App Router), TypeScript, Tailwind v4 (CSS-first config in
