@@ -1,6 +1,14 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 
+// `createServerClient` throws outright if URL/key are missing, so callers
+// on the "works with zero setup" paths (anonymous report generation) must
+// check this first and skip auth entirely rather than 500 — same guard the
+// middleware's `updateSession` and `SiteHeader` already apply.
+export function isSupabaseConfigured(): boolean {
+  return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY);
+}
+
 export async function createClient() {
   const cookieStore = await cookies();
 

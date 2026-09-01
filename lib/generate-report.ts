@@ -35,43 +35,41 @@ export const MAX_IDEA_LENGTH = 500;
 // drifting apart. See git history on app/api/generate/route.ts for why
 // each of these exists.
 
-// `openai/gpt-oss-120b` (a *reasoning* model, 8,000 TPM free-tier limit —
-// see HANDOFF.md for the incident this was first discovered in) does NOT
-// fit this 5-call council pipeline: confirmed live, a single report
-// generation exceeded it mid-pipeline ("Limit 8000, Used 6984, Requested
-// 2616"). Switched to `llama-3.3-70b-versatile` (12K TPM, same 30 RPM on
-// Groq's free tier, confirmed via Groq's rate-limits page) — a non-
-// reasoning model, so it also skips the hidden chain-of-thought tax that
-// made `reasoning_effort` necessary in the first place.
+// 2026-09-01: `llama-3.3-70b-versatile` was decommissioned by Groq (404
+// "model does not exist or you do not have access to it" on a valid key).
+// Groq's current chat line-up on the free tier is the GPT-OSS family plus
+// Qwen3; the closest drop-in for this council pipeline is
+// `openai/gpt-oss-120b` — the highest-quality option still available, and
+// the one the earlier `@ai-sdk/openai` notes below were already written
+// around. Overridable via GROQ_MODEL env (no redeploy needed to switch
+// again if Groq's catalogue shifts) — see .env.local.example.
 //
-// Still tight, not comfortable: measured live across several real
-// generations, one full report consumes ~11,700-11,900 of this model's
-// 12,000 TPM budget — on its own, before any concurrent traffic. Trimmed
-// what fixed prompt overhead I safely could (see CATEGORY_EMPHASIS_RULES
-// in lib/prompt.ts), but output length (the report content itself)
-// dominates the total and isn't something to cut without cutting quality.
-// Practical effect: this free-tier key can sustain roughly one report per
-// rolling minute — a second report request (or a batch run) landing in
-// the same window will very likely 429. Fine for solo testing; upgrading
-// to a paid Groq/Portkey tier is a real prerequisite before real traffic,
-// not just a nice-to-have.
+// TPM note (historical, still relevant on a free key): the GPT-OSS models
+// are reasoning models with a hidden chain-of-thought token cost, and a
+// single 5-call report generation has been measured to brush the free-tier
+// TPM ceiling on its own. `withRetry` below backs off and retries on 429,
+// so a solo/demo workload rides through it; sustained or concurrent
+// traffic still wants a paid Groq/Portkey tier.
 //
-// This also means the `@ai-sdk/openai` compatible-mode client had to go:
-// it always requests native `response_format: json_schema`, which Groq
-// only supports on the GPT-OSS family (confirmed live — llama-3.3 rejects
-// it outright: "This model does not support response format
-// `json_schema`"). Using `@ai-sdk/groq` directly instead, whose
-// `structuredOutputs` provider option (see STRUCTURED_OUTPUT_OPTIONS
-// below) explicitly falls back to `json_object` mode for models like this
-// one — the schema is still enforced client-side by Zod after parsing.
-const GROQ_MODEL = "llama-3.3-70b-versatile";
+// GPT-OSS *does* support Groq's native `response_format: json_schema`
+// (it was llama-3.3 that rejected it), but json_object mode + Zod
+// validation (STRUCTURED_OUTPUT_OPTIONS below) already works and is left
+// as-is to keep this a one-line model swap.
+const GROQ_MODEL = process.env.GROQ_MODEL || "openai/gpt-oss-120b";
 
 // Portkey's OpenAI-compatible gateway — not worth a whole dependency for
 // one URL constant (see git history: this used to come from the
 // `portkey-ai` package).
 const PORTKEY_GATEWAY_URL = "https://api.portkey.ai/v1";
 
-const MAX_MODEL_RETRIES = 1;
+// Groq's free tier caps report-generation models at 8,000 tokens/minute
+// (confirmed live 2026-09-01 for openai/gpt-oss-*), and one full 5-call
+// report runs ~10-14k tokens — so a generation *will* hit a 429 partway
+// through and has to pace itself over more than one rolling minute. Groq
+// returns a `retry-after` (~8s) on these; honouring it and retrying a few
+// times is what carries a single generation through. Enough retries to
+// cover every call in the pipeline eating one wait.
+const MAX_MODEL_RETRIES = 5;
 const FALLBACK_RETRY_BACKOFF_MS = 2000;
 const MAX_RETRY_BACKOFF_MS = 30000;
 
@@ -80,12 +78,18 @@ function sleep(ms: number) {
 }
 
 function getApiErrorStatus(error: unknown): number | undefined {
-  if (typeof error === "object" && error !== null && "status" in error && typeof error.status === "number") {
-    return error.status;
+  // AI SDK's APICallError exposes the HTTP status as `statusCode`; some
+  // other error shapes use `status`. Check both (a real 429 was slipping
+  // through as "not retryable" because only `status` was checked).
+  if (typeof error === "object" && error !== null) {
+    for (const key of ["statusCode", "status"] as const) {
+      if (key in error && typeof (error as Record<string, unknown>)[key] === "number") {
+        return (error as Record<string, number>)[key];
+      }
+    }
   }
-  // AI SDK wraps provider errors — the real HTTP status lives one level
-  // down on APICallError's `.cause` (or the error itself, depending on
-  // where it's thrown from), so check both shapes.
+  // AI SDK wraps provider errors — the real HTTP status can live one level
+  // down on `.cause`, so check that too.
   if (typeof error === "object" && error !== null && "cause" in error) {
     return getApiErrorStatus((error as { cause?: unknown }).cause);
   }
@@ -102,10 +106,20 @@ function getRetryBackoffMs(error: unknown, attempt: number): number {
     const headers = (error as { responseHeaders?: Record<string, string> }).responseHeaders;
     const retryAfter = Number(headers?.["retry-after"]);
     if (Number.isFinite(retryAfter) && retryAfter > 0) {
-      return Math.min(retryAfter * 1000, MAX_RETRY_BACKOFF_MS);
+      // +1s slack so the rolling-minute window has actually cleared.
+      return Math.min(retryAfter * 1000 + 1000, MAX_RETRY_BACKOFF_MS);
     }
   }
-  return FALLBACK_RETRY_BACKOFF_MS * attempt;
+  // Groq puts "Please try again in 8.085s" in the message body even when
+  // the header is absent — parse it as a second source of truth.
+  const message = error instanceof Error ? error.message : "";
+  const fromBody = Number(/try again in ([\d.]+)s/i.exec(message)?.[1]);
+  if (Number.isFinite(fromBody) && fromBody > 0) {
+    return Math.min(fromBody * 1000 + 1000, MAX_RETRY_BACKOFF_MS);
+  }
+  // Last resort: a 429 here is a per-minute token ceiling, so a short
+  // linear backoff isn't enough — climb toward the cap.
+  return Math.min(FALLBACK_RETRY_BACKOFF_MS * attempt * attempt, MAX_RETRY_BACKOFF_MS);
 }
 
 export function friendlyGenerationErrorMessage(error: unknown): string {
@@ -187,11 +201,16 @@ async function withRetry<T extends { usage?: { inputTokens?: number; outputToken
   }
 }
 
-// llama-3.3-70b-versatile doesn't support Groq's native json_schema
-// response format (GPT-OSS-only — see GROQ_MODEL comment above), so force
-// the json_object fallback; Zod still validates the parsed result, just
-// without Groq enforcing the shape server-side.
-const STRUCTURED_OUTPUT_OPTIONS = { groq: { structuredOutputs: false } };
+// GPT-OSS on Groq supports native `response_format: json_schema`, which
+// makes the model *structurally unable* to return malformed JSON — worth
+// far more than json_object mode here, where a low-reasoning run on a
+// large schema was intermittently producing unparseable output ("Failed
+// to generate JSON"). Zod still validates on top. `reasoningEffort: "low"`
+// matters on GPT-OSS: at default effort the hidden chain-of-thought was
+// ~1,000+ tokens per agent call, and against the 8,000 TPM free-tier
+// ceiling that tax is what tips the pipeline into 429s — "low" keeps the
+// models' judgement while cutting most of the overhead.
+const STRUCTURED_OUTPUT_OPTIONS = { groq: { structuredOutputs: true, reasoningEffort: "low" as const } };
 
 async function runMarketAgent(model: LanguageModel, idea: string): Promise<MarketDraft> {
   const { object } = await withRetry("market", () =>
@@ -285,13 +304,30 @@ export async function generateValidationReport(idea: string): Promise<Validation
   const model = getModel();
   const generateStart = Date.now();
 
-  // Wave 1: three specialists draft independently, in parallel — each owns
-  // a disjoint slice of the schema, see lib/report-schemas.ts.
-  const [market, competitive, execution] = await Promise.all([
-    runMarketAgent(model, idea),
-    runCompetitiveAgent(model, idea),
-    runExecutionAgent(model, idea),
-  ]);
+  // Wave 1: three specialists draft independently — each owns a disjoint
+  // slice of the schema, see lib/report-schemas.ts.
+  //
+  // Run them in sequence by default. Firing all three at once instantly
+  // claims ~7-8k tokens against Groq's 8,000 TPM free-tier window, which
+  // leaves the critic/synthesis calls nothing to work with and no way to
+  // pace — the whole generation then fails instead of just running slower.
+  // Sequential lets withRetry's backoff space the calls across the rolling
+  // window. Set GROQ_PARALLEL_AGENTS=1 on a paid tier to restore the
+  // faster fan-out.
+  let market: MarketDraft;
+  let competitive: CompetitiveDraft;
+  let execution: ExecutionDraft;
+  if (process.env.GROQ_PARALLEL_AGENTS === "1") {
+    [market, competitive, execution] = await Promise.all([
+      runMarketAgent(model, idea),
+      runCompetitiveAgent(model, idea),
+      runExecutionAgent(model, idea),
+    ]);
+  } else {
+    market = await runMarketAgent(model, idea);
+    competitive = await runCompetitiveAgent(model, idea);
+    execution = await runExecutionAgent(model, idea);
+  }
 
   // Wave 2: critic reads all 3 drafts together — this is where cross-draft
   // inconsistencies a single specialist couldn't see get caught.

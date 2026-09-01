@@ -1,5 +1,5 @@
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
 import { MAX_IDEA_LENGTH, friendlyGenerationErrorMessage, generateValidationReport } from "@/lib/generate-report";
 import { consumeCredit } from "@/lib/entitlements";
 
@@ -13,14 +13,23 @@ import { consumeCredit } from "@/lib/entitlements";
 // accordingly. Revisit before launch: the founder still wants to compare
 // providers on actual output quality once the product is feature-complete,
 // same open decision as before this swap.
-export const maxDuration = 60;
+// Sequential agents + TPM-paced retries (see lib/generate-report.ts) push
+// a free-tier generation past a minute, so give the function room. NOTE:
+// Vercel's Hobby plan hard-caps this at 60s regardless — a free-tier Groq
+// key + Hobby hosting can time out mid-report. Pro (or a paid Groq tier,
+// which removes the pacing need) is the fix.
+export const maxDuration = 300;
 
 export async function POST(request: Request) {
   try {
-    const supabase = await createClient();
+    // Supabase is optional — anonymous report generation is meant to work
+    // with zero setup (see middleware.ts / SiteHeader for the same guard).
+    // When it isn't configured, skip auth and treat every request as the
+    // signed-out free-tier path rather than 500 on a missing client.
+    const supabase = isSupabaseConfigured() ? await createClient() : null;
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = supabase ? await supabase.auth.getUser() : { data: { user: null } };
 
     // Tracks which org (if any) this generation belongs to, so the report
     // insert below can tag it — resolved from consumeCredit's own
@@ -93,7 +102,7 @@ export async function POST(request: Request) {
     // Best-effort save for signed-in users — generation already succeeded,
     // so a persistence failure (RLS misconfig, transient DB error, etc.)
     // should never turn into a failed response.
-    if (user) {
+    if (user && supabase) {
       try {
         const { error: insertError } = await supabase
           .from("reports")
